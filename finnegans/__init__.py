@@ -1,10 +1,15 @@
-"""Conector para la API de Finnegans (Teamplace / F3).
+"""Conector / Agente para la API de Finnegans (Teamplace / F3)."""
+from .client import FinnegansClient, FinnegansAuthError, FinnegansError
+from .discovery import DiscoveryError, get_api, search_apis
+from .validator import ChangeStore, ValidationError
 
-Expone un cliente seguro que maneja la autenticacion por
-client_credentials y ofrece metodos de lectura para las areas del
-negocio. Los secretos se leen desde variables de entorno / .env y
-nunca se escriben en logs.
-"""
-from .client import FinnegansClient, FinnegansError, FinnegansAuthError
-
-__all__ = ["FinnegansClient", "FinnegansError", "FinnegansAuthError"]
+__all__ = [
+    "FinnegansClient",
+    "FinnegansError",
+    "FinnegansAuthError",
+    "DiscoveryError",
+    "ValidationError",
+    "ChangeStore",
+    "search_apis",
+    "get_api",
+]

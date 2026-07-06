@@ -39,6 +39,14 @@ class Settings:
         self.client_secret = os.environ.get("FINNEGANS_CLIENT_SECRET")
         self.workspace = os.environ.get("FINNEGANS_WORKSPACE")
 
+        # MCP de documentacion (catalogo de APIs Finnegans)
+        self.docs_mcp_url = os.environ.get(
+            "FINNEGANS_DOCS_MCP_URL",
+            "https://services.finneg.com/api/1/finnegans-developer-mcp/finnegans-api-docs/mcp",
+        )
+        self.docs_client_id = os.environ.get("FINNEGANS_DOCS_CLIENT_ID")
+        self.docs_secret_key = os.environ.get("FINNEGANS_DOCS_SECRET_KEY")
+
     def require_credentials(self) -> None:
         missing = [
             name
@@ -52,4 +60,19 @@ class Settings:
             raise RuntimeError(
                 "Faltan credenciales: " + ", ".join(missing) + ". "
                 "Configuralas en el archivo .env (ver .env.example)."
+            )
+
+    def require_docs_credentials(self) -> None:
+        missing = [
+            name
+            for name, val in (
+                ("FINNEGANS_DOCS_CLIENT_ID", self.docs_client_id),
+                ("FINNEGANS_DOCS_SECRET_KEY", self.docs_secret_key),
+            )
+            if not val
+        ]
+        if missing:
+            raise RuntimeError(
+                "Faltan credenciales del MCP de documentacion: " + ", ".join(missing) + ". "
+                "Obtenelas desde Finnegans / Cursor MCP config (ver .env.example)."
             )

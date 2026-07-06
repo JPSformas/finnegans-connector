@@ -31,11 +31,12 @@ class FinnegansAuthError(FinnegansError):
 
 
 class FinnegansClient:
-    """Cliente de lectura para la API de Finnegans.
+    """Cliente HTTP para la API de Finnegans (lectura y escritura).
 
     Ejemplo:
         client = FinnegansClient()
-        data = client.get("clienteList")
+        data = client.get("producto", id="ABC")
+        client.request("POST", "producto", body={"Codigo": "X", "Nombre": "Y"})
     """
 
     def __init__(
@@ -92,23 +93,39 @@ class FinnegansClient:
         return self._token
 
     # ------------------------------------------------------------- request
-    def get(
+    def _parse_response(self, raw: str, ctype: str) -> Any:
+        if "application/json" in ctype:
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return raw
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+
+    def request(
         self,
+        method: str,
         endpoint: str,
         id: str | None = None,
         params: dict[str, Any] | None = None,
+        body: Any | None = None,
         _retry_on_auth: bool = True,
     ) -> Any:
-        """GET generico contra la API, inyectando el ACCESS_TOKEN.
+        """Request HTTP generico contra la API de Finnegans.
 
         Args:
-            endpoint: nombre del recurso, ej. "clienteList" o "cliente".
-            id: id opcional para endpoints de tipo /recurso/{id}.
-            params: filtros/query params adicionales.
+            method: GET, POST, PUT, DELETE, etc.
+            endpoint: nombre del recurso (api id), ej. "producto".
+            id: codigo opcional en el path (/api/{endpoint}/{id}).
+            params: query params (ACCESS_TOKEN se inyecta automaticamente).
+            body: cuerpo JSON para POST/PUT.
 
         Returns:
-            El cuerpo parseado (dict/list si es JSON, o texto).
+            Cuerpo parseado (dict/list si es JSON, o texto).
         """
+        method = method.upper()
         endpoint = endpoint.strip("/")
         query = dict(params or {})
         query["ACCESS_TOKEN"] = self.get_token()
@@ -118,32 +135,39 @@ class FinnegansClient:
             path += f"/{urllib.parse.quote(str(id))}"
         url = f"{self.settings.base_url}{path}?" + urllib.parse.urlencode(query)
 
+        headers = {"Accept": "application/json"}
+        data = None
+        if body is not None and method in {"POST", "PUT", "PATCH"}:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
-                ctype = resp.headers.get("Content-Type", "")
+                return self._parse_response(raw, resp.headers.get("Content-Type", ""))
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
+            err_body = e.read().decode("utf-8", errors="replace")
             if e.code in (401, 403) and _retry_on_auth:
                 self.get_token(force_refresh=True)
-                return self.get(endpoint, id=id, params=params, _retry_on_auth=False)
+                return self.request(
+                    method, endpoint, id=id, params=params, body=body, _retry_on_auth=False
+                )
             raise FinnegansError(
-                f"Error en GET {endpoint} (HTTP {e.code}): {body[:400]}"
+                f"Error en {method} {endpoint} (HTTP {e.code}): {err_body[:400]}"
             ) from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise FinnegansError(f"No se pudo conectar a Finnegans ({endpoint}): {e}") from e
 
-        if "application/json" in ctype:
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                return raw
-        # Puede venir JSON aunque el content-type no lo indique.
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return raw
+    def get(
+        self,
+        endpoint: str,
+        id: str | None = None,
+        params: dict[str, Any] | None = None,
+        _retry_on_auth: bool = True,
+    ) -> Any:
+        """GET generico (atajo sobre request)."""
+        return self.request("GET", endpoint, id=id, params=params, _retry_on_auth=_retry_on_auth)
 
     # ------------------------------------------------- conveniencia / areas
     # Convencion CONFIRMADA contra la API real de esta cuenta:
