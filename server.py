@@ -76,7 +76,7 @@ def _truncate(data: Any, max_len: int = 3000) -> str:
 
 # ------------------------------------------------------------------ tools
 @mcp.tool()
-def verificar_conexion() -> str:
+async def verificar_conexion() -> str:
     """Verifica credenciales de API y acceso al catalogo de documentacion."""
     lines = []
     try:
@@ -86,7 +86,7 @@ def verificar_conexion() -> str:
         lines.append(f"API Finnegans: ERROR - {e}")
 
     try:
-        result = search_apis("producto")
+        result = await search_apis("producto")
         count = result.get("count", 0) if isinstance(result, dict) else 0
         lines.append(f"Catalogo de APIs: OK ({count} resultados de prueba)")
     except (DiscoveryError, RuntimeError) as e:
@@ -96,14 +96,14 @@ def verificar_conexion() -> str:
 
 
 @mcp.tool()
-def buscar_api(consulta: str) -> str:
+async def buscar_api(consulta: str) -> str:
     """Busca APIs de Finnegans por nombre, id o descripcion.
 
     Usar PRIMERO cuando el usuario pide algo y no sabes que endpoint usar.
     Ejemplo: consulta="ordenes compra pendientes" o "saldo cliente".
     """
     try:
-        result = search_apis(consulta)
+        result = await search_apis(consulta)
         if not isinstance(result, dict):
             return _fmt(result)
 
@@ -124,13 +124,13 @@ def buscar_api(consulta: str) -> str:
 
 
 @mcp.tool()
-def ver_api(api_id: str) -> str:
+async def ver_api(api_id: str) -> str:
     """Obtiene la especificacion de una API: metodos, parametros y body.
 
     Llamar DESPUES de buscar_api para saber como invocar el endpoint.
     """
     try:
-        result = get_api(api_id)
+        result = await get_api(api_id)
         if not isinstance(result, dict):
             return _fmt(result)
 

@@ -6,7 +6,6 @@ endpoint llamar segun la pregunta del usuario.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -53,14 +52,14 @@ async def _call_docs_tool(tool_name: str, arguments: dict[str, Any]) -> Any:
             return _parse_tool_result(result)
 
 
-def search_apis(query: str) -> dict[str, Any]:
+async def search_apis(query: str) -> dict[str, Any]:
     """Busca APIs por nombre, id o descripcion."""
-    return asyncio.run(_call_docs_tool("search_apis", {"query": query}))
+    return await _call_docs_tool("search_apis", {"query": query})
 
 
-def get_api(api_id: str) -> dict[str, Any]:
+async def get_api(api_id: str) -> dict[str, Any]:
     """Obtiene la especificacion OpenAPI de una API."""
-    return asyncio.run(_call_docs_tool("get_api", {"api": api_id}))
+    return await _call_docs_tool("get_api", {"api": api_id})
 
 
 def list_methods(api_spec: dict[str, Any]) -> list[dict[str, Any]]:

@@ -105,9 +105,11 @@ def check_api_connection() -> bool:
 def check_docs_catalog() -> bool:
     print("\n5. Catalogo de APIs (documentacion)")
     try:
+        import asyncio
+
         from finnegans.discovery import search_apis
 
-        result = search_apis("producto")
+        result = asyncio.run(search_apis("producto"))
         if isinstance(result, dict) and result.get("count", 0) > 0:
             ok(f"Busqueda de prueba OK ({result['count']} APIs encontradas)")
             return True
