@@ -316,7 +316,7 @@ Ejemplo (ajustá `command` si tu Python está en otro path):
 {
   "mcpServers": {
     "finnegans-agent": {
-      "command": "C:\\Users\\Juan\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+      "command": "C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
       "args": ["C:\\FinnegansAgent\\server.py"],
       "cwd": "C:\\FinnegansAgent"
     }
