@@ -5,6 +5,7 @@ Finnegans desde una IA (Claude Desktop), en lenguaje natural, con
 validación obligatoria antes de cualquier escritura.
 
 Combina en **un solo MCP**:
+
 - **Descubrimiento** de APIs (catálogo oficial Finnegans)
 - **Lectura** (GET a cualquier endpoint)
 - **Escritura con validación** (POST/PUT/DELETE solo tras confirmación del usuario)
@@ -32,6 +33,8 @@ IA:    [ejecutar_cambio]
 
 ---
 
+
+
 ## Guía de instalación IT (paso a paso)
 
 Esta sección está pensada para que alguien de IT configure **una PC de líder**
@@ -40,16 +43,20 @@ No saltees verificaciones: cada paso tiene un comando para confirmar que quedó 
 
 ### Resumen de qué se instala
 
-| Componente | Dónde vive | Quién lo ve |
-|---|---|---|
-| Carpeta `finnegans-connector` | Disco local (ej. `C:\FinnegansAgent`) | Solo IT |
-| Archivo `.env` con credenciales | Dentro de esa carpeta | Solo IT |
-| Python + dependencias | Sistema | Solo IT |
-| Claude Desktop + config MCP | App del líder | El líder abre Claude |
+
+| Componente                      | Dónde vive                            | Quién lo ve          |
+| ------------------------------- | ------------------------------------- | -------------------- |
+| Carpeta `finnegans-connector`   | Disco local (ej. `C:\FinnegansAgent`) | Solo IT              |
+| Archivo `.env` con credenciales | Dentro de esa carpeta                 | Solo IT              |
+| Python + dependencias           | Sistema                               | Solo IT              |
+| Claude Desktop + config MCP     | App del líder                         | El líder abre Claude |
+
 
 El líder **no** instala Python, **no** edita `.env`, **no** toca el MCP de docs de Cursor.
 
 ---
+
+
 
 ### Paso 0 — Checklist previo
 
@@ -57,14 +64,20 @@ Antes de empezar, confirmá que tenés:
 
 - [ ] Acceso administrativo a la PC del líder (Windows 10/11)
 - [ ] **Credenciales API de ejecución** (`client_id` + `client_secret`)  
-      Finnegans → Configuración → General → Seguridad → Usuarios → [usuario API] → **Keys API**
+  ```
+  Finnegans → Configuración → General → Seguridad → Usuarios → [usuario API] → **Keys API**
+  ```
 - [ ] **Credenciales del catálogo de APIs** (`x-client-id` + `x-secret-key`)  
-      Las mismas que usa el MCP `finnegans-api-docs` en Cursor (archivo `mcp.json`)
+  ```
+  Las mismas que usa el MCP `finnegans-api-docs` en Cursor (archivo `mcp.json`)
+  ```
 - [ ] Instalador de [Python 3.10+](https://www.python.org/downloads/) (marcar **"Add python.exe to PATH"**)
 - [ ] Instalador de [Claude Desktop](https://claude.ai/download)
 - [ ] Carpeta del proyecto (zip o copia de red)
 
 ---
+
+
 
 ### Paso 1 — Verificar Python
 
@@ -96,13 +109,15 @@ Ejemplo de salida: `C:\Users\Juan\AppData\Local\Python\pythoncore-3.14-64\python
 
 ---
 
+
+
 ### Paso 2 — Copiar el proyecto a la PC
 
 Creá una carpeta fija. **Recomendado:** `C:\FinnegansAgent` (sin espacios en la ruta).
 
 ```powershell
 # Si tenés el proyecto en otra ubicación, ajustá ORIGEN
-$Origen  = "C:\Users\user\finnegans-connector"   # o la ruta del zip descomprimido
+$Origen  = "C:\finnegans-connector-master\finnegans-connector-master"   # o la ruta del zip descomprimido
 $Destino = "C:\FinnegansAgent"
 
 New-Item -ItemType Directory -Force -Path $Destino | Out-Null
@@ -120,6 +135,8 @@ Test-Path "C:\FinnegansAgent\server.py"
 Debe devolver `True`.
 
 ---
+
+
 
 ### Paso 3 — Crear y completar el archivo `.env`
 
@@ -144,11 +161,13 @@ FINNEGANS_DOCS_CLIENT_ID=xxxxxxxx...
 FINNEGANS_DOCS_SECRET_KEY=xxxxxxxx...
 ```
 
-| Variable | Qué es | Dónde conseguirla |
-|---|---|---|
-| `FINNEGANS_CLIENT_ID` / `FINNEGANS_CLIENT_SECRET` | Credenciales para **ejecutar** consultas y cambios en Finnegans | Finnegans → Usuarios → Keys API |
-| `FINNEGANS_DOCS_CLIENT_ID` / `FINNEGANS_DOCS_SECRET_KEY` | Credenciales para **buscar** APIs en el catálogo | MCP `finnegans-api-docs` en Cursor → `mcp.json` → headers |
-| `FINNEGANS_WORKSPACE` | Nombre del espacio de trabajo | Ej. `SOUTEX` |
+
+| Variable                                                 | Qué es                                                          | Dónde conseguirla                                         |
+| -------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
+| `FINNEGANS_CLIENT_ID` / `FINNEGANS_CLIENT_SECRET`        | Credenciales para **ejecutar** consultas y cambios en Finnegans | Finnegans → Usuarios → Keys API                           |
+| `FINNEGANS_DOCS_CLIENT_ID` / `FINNEGANS_DOCS_SECRET_KEY` | Credenciales para **buscar** APIs en el catálogo                | MCP `finnegans-api-docs` en Cursor → `mcp.json` → headers |
+| `FINNEGANS_WORKSPACE`                                    | Nombre del espacio de trabajo                                   | Ej. `SOUTEX`                                              |
+
 
 **Errores comunes:**
 
@@ -165,6 +184,8 @@ git check-ignore .env
 Debe imprimir `.env`.
 
 ---
+
+
 
 ### Paso 4 — Instalar dependencias Python
 
@@ -185,6 +206,8 @@ python -c "import mcp; print('mcp OK')"
 Debe imprimir `mcp OK`.
 
 ---
+
+
 
 ### Paso 5 — Verificación automática (obligatorio)
 
@@ -216,55 +239,72 @@ Al final del script verás el bloque JSON exacto para Claude Desktop con las rut
 
 ---
 
+
+
 ### Paso 6 — Configurar Claude Desktop
 
-> **Nota:** esta guía es para **Claude Desktop** (app de escritorio), no para Claude Code (CLI).
+> **Nota sobre la ruta del config en Windows:** Claude Desktop instalado desde
+> Microsoft Store, WinGet o el instalador actual de claude.ai usa el formato
+> **MSIX**. En ese caso el archivo real **no** está en `%APPDATA%\Claude\`, sino
+> en una carpeta virtualizada bajo `Packages\Claude_...\LocalCache\Roaming\Claude\`.
+> El botón *Edit Config* de Claude a veces abre el archivo equivocado; usá el
+> script de abajo para abrir el que la app realmente lee.
+
+
 
 #### 6.1 Cerrar Claude Desktop por completo
 
 Cerrá la app (incluido el ícono en la bandeja del sistema). La config solo se lee al iniciar.
 
-#### 6.2 Ubicación del archivo de configuración MCP
+#### 6.2 Encontrar y editar el archivo de configuración MCP
 
-Claude Desktop en Windows puede usar **dos rutas** según cómo se instaló:
-
-| Tipo de instalación | Dónde está el config que Claude **lee** |
-|---|---|
-| **MSIX** (Microsoft Store, WinGet, instalador actual de claude.ai) | `%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\claude_desktop_config.json` |
-| **Clásica** (instalador antiguo, sin sandbox) | `%APPDATA%\Claude\claude_desktop_config.json` |
-
-En instalaciones MSIX (la más común hoy), el hash suele ser `pzs8sxrjxfjjc`:
-
-```
-C:\Users\<usuario>\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
-```
-
-**Importante:** el botón *Settings → Developer → Edit Config* a veces abre el archivo de `%APPDATA%\Claude\`, pero la app MSIX **lee el de Packages**. Si editás el archivo equivocado, el MCP no carga aunque el JSON sea válido.
-
-Usá este script para detectar y abrir el archivo correcto:
+Ejecutá este bloque en PowerShell. Detecta automáticamente si tenés instalación
+MSIX o clásica y abre el archivo correcto:
 
 ```powershell
-# Detectar ruta real del config (MSIX o clásica)
+# Detectar la ruta real del config (MSIX o clasico)
+$configFile = $null
 $pkg = (Get-AppxPackage -Name "*Claude*" -ErrorAction SilentlyContinue).PackageFamilyName
 if ($pkg) {
-    $configDir  = "$env:LOCALAPPDATA\Packages\$pkg\LocalCache\Roaming\Claude"
-    $configFile = "$configDir\claude_desktop_config.json"
-    Write-Host "Instalacion MSIX detectada."
-} else {
-    $configDir  = "$env:APPDATA\Claude"
-    $configFile = "$configDir\claude_desktop_config.json"
-    Write-Host "Instalacion clasica detectada."
+    $msixConfig = Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
+    if (Test-Path (Split-Path $msixConfig -Parent)) {
+        $configFile = $msixConfig
+        Write-Host "Instalacion MSIX detectada."
+        Write-Host "Config que lee Claude: $configFile"
+    }
 }
-Write-Host "Archivo a editar: $configFile"
+if (-not $configFile) {
+    $configFile = "$env:APPDATA\Claude\claude_desktop_config.json"
+    Write-Host "Instalacion clasica (no MSIX)."
+    Write-Host "Config: $configFile"
+}
 
-New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+# Crear el archivo si no existe
+New-Item -ItemType Directory -Force -Path (Split-Path $configFile -Parent) | Out-Null
 if (-not (Test-Path $configFile)) {
     '{}' | Set-Content -Path $configFile -Encoding UTF8
 }
+
+# Aviso si existen dos copias (bug conocido de MSIX)
+$legacyConfig = "$env:APPDATA\Claude\claude_desktop_config.json"
+if ($configFile -ne $legacyConfig -and (Test-Path $legacyConfig)) {
+    Write-Host ""
+    Write-Host "AVISO: Tambien existe $legacyConfig"
+    Write-Host "       Edita SOLO el archivo MSIX de arriba. El otro lo ignora Claude."
+}
+
 notepad $configFile
 ```
 
-Si existen **ambos** archivos, editá el que imprime el script arriba. Opcional: copiá el bloque `mcpServers` al otro para mantenerlos sincronizados.
+
+| Tipo de instalación                           | Ruta del config que lee Claude                                                                      |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **MSIX** (Store / WinGet / instalador actual) | `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json` |
+| **Clásica** (instalador antiguo)              | `%APPDATA%\Claude\claude_desktop_config.json`                                                       |
+
+
+El sufijo `pzs8sxrjxfjjc` suele ser fijo; si difiere en tu PC, el script de
+arriba lo resuelve solo con `Get-AppxPackage`.
 
 #### 6.3 Agregar el servidor MCP
 
@@ -276,7 +316,6 @@ Ejemplo (ajustá `command` si tu Python está en otro path):
 {
   "mcpServers": {
     "finnegans-agent": {
-      "type": "stdio",
       "command": "C:\\Users\\Juan\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
       "args": ["C:\\FinnegansAgent\\server.py"],
       "cwd": "C:\\FinnegansAgent"
@@ -287,27 +326,39 @@ Ejemplo (ajustá `command` si tu Python está en otro path):
 
 **Reglas para no fallar:**
 
-| Regla | Correcto | Incorrecto |
-|---|---|---|
-| Barras en JSON | `C:\\FinnegansAgent\\server.py` | `C:\FinnegansAgent\server.py` |
-| `command` | Ruta completa a `python.exe` | Solo `python` (puede no resolverse en Claude) |
-| `cwd` | Carpeta del proyecto (recomendado) | Otra carpeta o vacío |
-| Nombre del servidor | `finnegans-agent` | Cualquier otro (debe coincidir con lo documentado) |
+
+| Regla               | Correcto                        | Incorrecto                                         |
+| ------------------- | ------------------------------- | -------------------------------------------------- |
+| Barras en JSON      | `C:\\FinnegansAgent\\server.py` | `C:\FinnegansAgent\server.py`                      |
+| `command`           | Ruta completa a `python.exe`    | Solo `python` (puede no resolverse en Claude)      |
+| `cwd`               | Carpeta donde está `.env`       | Otra carpeta o vacío                               |
+| Nombre del servidor | `finnegans-agent`               | Cualquier otro (debe coincidir con lo documentado) |
+
 
 Si ya tenés otros MCPs en el JSON, **agregá** `finnegans-agent` dentro de `mcpServers` sin borrar los demás.
 
-Validá que el JSON sea válido (reutilizá `$configFile` del script del paso 6.2):
+Validá que el JSON sea válido (reutilizá la misma detección de ruta):
 
 ```powershell
+$pkg = (Get-AppxPackage -Name "*Claude*" -ErrorAction SilentlyContinue).PackageFamilyName
+$configFile = if ($pkg -and (Test-Path (Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude"))) {
+    Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
+} else {
+    "$env:APPDATA\Claude\claude_desktop_config.json"
+}
 Get-Content $configFile | ConvertFrom-Json | Out-Null
-if ($?) { Write-Host "JSON valido" } else { Write-Host "JSON INVALIDO - corregir antes de abrir Claude" }
+if ($?) { Write-Host "JSON valido en $configFile" } else { Write-Host "JSON INVALIDO - corregir antes de abrir Claude" }
 ```
+
+
 
 #### 6.4 Reiniciar Claude Desktop
 
 Abrí Claude Desktop. En la conversación, el ícono de herramientas (🔨) debería mostrar tools de `finnegans-agent`.
 
 ---
+
+
 
 ### Paso 7 — Instrucciones del asistente para el líder
 
@@ -322,6 +373,8 @@ notepad C:\FinnegansAgent\ASSISTANT_INSTRUCTIONS.md
 ```
 
 ---
+
+
 
 ### Paso 8 — Prueba funcional en Claude (smoke test)
 
@@ -352,6 +405,8 @@ Esperado: recién ahí ejecuta `ejecutar_cambio`.
 
 ---
 
+
+
 ### Paso 9 — Pruebas manuales desde PowerShell (si Claude falla)
 
 Si Claude no conecta el MCP pero `verify_setup.py` pasó, probá la API directo:
@@ -370,6 +425,8 @@ Si la CLI funciona pero Claude no, el problema está en `claude_desktop_config.j
 
 ---
 
+
+
 ### Paso 10 — Entrega al líder
 
 Entregá la PC con:
@@ -386,12 +443,18 @@ Entregá la PC con:
 
 ---
 
+
+
 ## Solución de problemas
+
+
 
 ### `python no se reconoce`
 
 - Reinstalá Python con **Add to PATH**.
 - Usá la ruta completa en `claude_desktop_config.json` → `command`.
+
+
 
 ### `verify_setup.py` — error en credenciales API
 
@@ -403,6 +466,8 @@ Entregá la PC con:
 - Regenerá las keys en Finnegans si fueron rotadas.
 - Comprobá que la PC tenga internet y acceso a `https://api.finneg.com`.
 
+
+
 ### `verify_setup.py` — error en catálogo de APIs
 
 ```
@@ -413,50 +478,54 @@ Entregá la PC con:
 - Copiá los valores desde el `mcp.json` de Cursor (sección `finnegans-api-docs` → `headers`).
 - Comprobá acceso a `https://services.finneg.com`.
 
+
+
 ### Claude Desktop no muestra herramientas MCP
 
 1. Cerrá Claude por completo (bandeja incluida).
-2. **Confirmá que editaste el archivo correcto.** En MSIX, el config activo está en `Packages\Claude_*\LocalCache\Roaming\Claude\`, no en `%APPDATA%\Claude\` (ver Paso 6.2).
+2. Confirmá que editaste el config **MSIX** (si aplica), no solo el de `%APPDATA%\Claude\` (Paso 6.2).
 3. Validá JSON: `ConvertFrom-Json` en PowerShell (Paso 6.3).
 4. Confirmá que `command` apunta al mismo `python` donde instalaste `mcp`.
-5. Revisá logs de Claude (ruta MSIX o clásica según tu instalación):
-   ```powershell
+5. Revisá logs de Claude (ruta según tipo de instalación):
+  ```powershell
    $pkg = (Get-AppxPackage -Name "*Claude*" -ErrorAction SilentlyContinue).PackageFamilyName
-   $logDir = if ($pkg) {
-       "$env:LOCALAPPDATA\Packages\$pkg\LocalCache\Roaming\Claude\logs"
+   $logDir = if ($pkg -and (Test-Path (Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude\logs"))) {
+       Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude\logs"
    } else {
        "$env:APPDATA\Claude\logs"
    }
-   Get-ChildItem $logDir -Recurse -Filter "*mcp*" -ErrorAction SilentlyContinue |
-       Sort-Object LastWriteTime -Descending | Select-Object -First 5
-   ```
+   Get-ChildItem $logDir -Recurse -Filter "*mcp*" | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+  ```
 6. Ejecutá manualmente el servidor (debe quedar esperando, sin error):
-   ```powershell
+  ```powershell
    Set-Location C:\FinnegansAgent
    python server.py
-   ```
+  ```
    Ctrl+C para salir. Si imprime error acá, corregilo antes de abrir Claude.
 
-### Edité el config pero Claude no lo toma (MSIX)
 
-- El botón *Edit Config* pudo haber abierto `%APPDATA%\Claude\claude_desktop_config.json` mientras la app lee el de `Packages\...`.
-- Abrí el archivo con el script del Paso 6.2, pegá el bloque `mcpServers`, guardá y reiniciá Claude por completo.
 
 ### `Bad Request: id missing` al consultar
 
 - Esa API requiere un **código** en el path. Primero `buscar_api` + `ver_api` para ver parámetros.
 - En `consultar_finnegans`, pasá el parámetro `id` con el código del maestro.
 
+
+
 ### `404 Not Found` al consultar
 
 - La petición está bien formada; el **código no existe** en Finnegans.
 - Probá con otro código que sepas que existe.
+
+
 
 ### El agente escribe sin pedir confirmación
 
 - Revisá que las **instrucciones del proyecto** incluyan `ASSISTANT_INSTRUCTIONS.md`.
 - El flujo correcto es: `preparar_cambio` → usuario confirma → `ejecutar_cambio`.
 - `ejecutar_cambio` con `usuario_confirmo=false` **nunca** ejecuta (está bloqueado en código).
+
+
 
 ### Actualizar el agente en una PC ya configurada
 
@@ -473,18 +542,24 @@ python verify_setup.py
 
 ---
 
+
+
 ## Herramientas MCP expuestas
 
-| Tool | Propósito | Cuándo usarla |
-|---|---|---|
-| `verificar_conexion` | Prueba credenciales y catálogo | Diagnóstico / setup |
-| `buscar_api` | Busca endpoints por nombre o descripción | Siempre primero |
-| `ver_api` | Muestra métodos y parámetros de una API | Antes de consultar o escribir |
-| `consultar_finnegans` | Lectura (GET) | Consultas de datos |
-| `preparar_cambio` | Arma escritura sin ejecutar | Crear/modificar/eliminar |
-| `ejecutar_cambio` | Ejecuta tras confirmación del usuario | Solo después de "sí, confirmo" |
+
+| Tool                  | Propósito                                | Cuándo usarla                  |
+| --------------------- | ---------------------------------------- | ------------------------------ |
+| `verificar_conexion`  | Prueba credenciales y catálogo           | Diagnóstico / setup            |
+| `buscar_api`          | Busca endpoints por nombre o descripción | Siempre primero                |
+| `ver_api`             | Muestra métodos y parámetros de una API  | Antes de consultar o escribir  |
+| `consultar_finnegans` | Lectura (GET)                            | Consultas de datos             |
+| `preparar_cambio`     | Arma escritura sin ejecutar              | Crear/modificar/eliminar       |
+| `ejecutar_cambio`     | Ejecuta tras confirmación del usuario    | Solo después de "sí, confirmo" |
+
 
 ---
+
+
 
 ## Seguridad
 
@@ -496,6 +571,8 @@ python verify_setup.py
 - Rotar `client_secret` y keys de docs si se expusieron en un chat o mail.
 
 ---
+
+
 
 ## Estructura del proyecto
 
@@ -516,19 +593,25 @@ finnegans-connector/
 
 ---
 
+
+
 ## Diferencia con el MCP de docs de Cursor
 
-| | MCP docs (Cursor) | Este agente |
-|---|---|---|
-| Propósito | Documentación para programadores | Operación para líderes |
-| Ejecuta en Finnegans | No | Sí |
-| Descubre APIs | Sí | Sí (integrado) |
-| Validación de escrituras | No aplica | Sí, obligatoria |
+
+|                          | MCP docs (Cursor)                | Este agente            |
+| ------------------------ | -------------------------------- | ---------------------- |
+| Propósito                | Documentación para programadores | Operación para líderes |
+| Ejecuta en Finnegans     | No                               | Sí                     |
+| Descubre APIs            | Sí                               | Sí (integrado)         |
+| Validación de escrituras | No aplica                        | Sí, obligatoria        |
+
 
 Los líderes solo necesitan **este agente** + Claude Desktop.
 El MCP de docs en Cursor queda para desarrollo.
 
 ---
+
+
 
 ## Referencia rápida de comandos IT
 
@@ -545,13 +628,11 @@ python cli.py token
 # Probar lectura
 python cli.py get producto --id CODIGO_REAL
 
-# Abrir config MCP de Claude (detecta MSIX o clásica)
+# Abrir config MCP de Claude (detecta MSIX o clasico)
 $pkg = (Get-AppxPackage -Name "*Claude*" -ErrorAction SilentlyContinue).PackageFamilyName
-$configFile = if ($pkg) {
-    "$env:LOCALAPPDATA\Packages\$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
-} else {
-    "$env:APPDATA\Claude\claude_desktop_config.json"
-}
+$configFile = if ($pkg -and (Test-Path (Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude"))) {
+    Join-Path $env:LOCALAPPDATA "Packages\$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
+} else { "$env:APPDATA\Claude\claude_desktop_config.json" }
 notepad $configFile
 
 # Validar JSON de Claude
@@ -560,3 +641,4 @@ Get-Content $configFile | ConvertFrom-Json
 # Ver ruta de Python para la config
 (Get-Command python).Source
 ```
+

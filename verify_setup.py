@@ -145,52 +145,62 @@ def check_mcp_server() -> bool:
         return False
 
 
-def _claude_config_paths() -> tuple[Path | None, Path | None]:
-    """Return (msix_config, legacy_config) if they exist."""
-    local = Path(os.environ.get("LOCALAPPDATA", ""))
-    legacy = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude_desktop_config.json"
-    msix: Path | None = None
-    packages = local / "Packages"
-    if packages.is_dir():
-        for pkg_dir in sorted(packages.glob("Claude_*")):
-            candidate = (
-                pkg_dir / "LocalCache" / "Roaming" / "Claude" / "claude_desktop_config.json"
+def _claude_desktop_config_candidates() -> list[Path]:
+    """Rutas posibles de claude_desktop_config.json (MSIX primero, luego clasica)."""
+    candidates: list[Path] = []
+    local = os.environ.get("LOCALAPPDATA", "")
+    if local:
+        packages = Path(local) / "Packages"
+        if packages.is_dir():
+            candidates.extend(
+                sorted(packages.glob("Claude_*/LocalCache/Roaming/Claude/claude_desktop_config.json"))
             )
-            if candidate.exists():
-                msix = candidate
-                break
-    return msix, legacy if legacy.exists() else None
+    roaming = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude_desktop_config.json"
+    if roaming not in candidates:
+        candidates.append(roaming)
+    return candidates
+
+
+def _primary_claude_desktop_config() -> Path:
+    existing = [p for p in _claude_desktop_config_candidates() if p.exists()]
+    if not existing:
+        return _claude_desktop_config_candidates()[0]
+    msix = [p for p in existing if "Packages" in str(p)]
+    return msix[0] if msix else existing[0]
 
 
 def check_claude_config_hint() -> None:
     print("\n7. Claude Desktop (verificacion manual)")
-    msix_config, legacy_config = _claude_config_paths()
-    config = msix_config or legacy_config
+    candidates = _claude_desktop_config_candidates()
+    existing = [p for p in candidates if p.exists()]
+    config = _primary_claude_desktop_config()
 
-    if msix_config:
-        ok(f"Config MSIX encontrado: {msix_config}")
-        if legacy_config:
-            warn(f"Tambien existe config clasico (puede ser el que abre Edit Config): {legacy_config}")
-            warn("En MSIX, Claude lee el de Packages. Edita ese (ver README Paso 6.2).")
-    elif legacy_config:
-        ok(f"Config clasico encontrado: {legacy_config}")
+    if existing:
+        ok(f"Config encontrado ({len(existing)} copia(s))")
+        for path in existing:
+            kind = "MSIX" if "Packages" in str(path) else "clasico"
+            print(f"       [{kind}] {path}")
     else:
-        warn("No se encontro claude_desktop_config.json")
-        warn("Crealo al configurar Claude Desktop (ver README Paso 6.2).")
+        warn("No existe claude_desktop_config.json en ninguna ruta conocida")
+        warn(f"Ruta sugerida al configurar: {config}")
+        warn("Ver README Paso 6 (script de deteccion MSIX).")
 
-    if config and config.exists():
+    if len(existing) > 1:
+        warn("Hay mas de un config. En instalaciones MSIX, Claude lee el de Packages\\...")
+        warn("No edites solo %APPDATA%\\Claude\\ si tambien existe la copia MSIX.")
+
+    if config.exists():
         content = config.read_text(encoding="utf-8")
         if "finnegans-agent" in content:
-            ok("Entrada 'finnegans-agent' presente en claude_desktop_config.json")
+            ok("Entrada 'finnegans-agent' presente en el config que Claude deberia leer")
         else:
-            warn("No se encontro 'finnegans-agent' en claude_desktop_config.json")
+            warn("No se encontro 'finnegans-agent' en el config principal")
             print("       Agrega la entrada MCP (ver README seccion Instalacion IT).")
 
     print("\n  Bloque JSON sugerido para claude_desktop_config.json:")
     suggested = {
         "mcpServers": {
             "finnegans-agent": {
-                "type": "stdio",
                 "command": sys.executable,
                 "args": [str((ROOT / "server.py").resolve())],
                 "cwd": str(ROOT.resolve()),
