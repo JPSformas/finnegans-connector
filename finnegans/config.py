@@ -39,6 +39,17 @@ class Settings:
         self.client_secret = os.environ.get("FINNEGANS_CLIENT_SECRET")
         self.workspace = os.environ.get("FINNEGANS_WORKSPACE")
 
+        from pathlib import Path as _Path
+
+        self.operator = os.environ.get("FINNEGANS_OPERATOR", "")
+        default_audit = _Path(__file__).resolve().parent.parent / "audit" / "finnegans-audit.jsonl"
+        self.audit_log_path = os.environ.get("FINNEGANS_AUDIT_LOG", str(default_audit))
+        self.allow_delete = os.environ.get("FINNEGANS_ALLOW_DELETE", "").strip().lower() in (
+            "1", "true", "si", "sí", "yes",
+        )
+        raw_patterns = os.environ.get("FINNEGANS_HIGH_RISK_PATTERNS", "")
+        self.high_risk_patterns = [p.strip() for p in raw_patterns.split(",") if p.strip()]
+
         # MCP de documentacion (catalogo de APIs Finnegans)
         self.docs_mcp_url = os.environ.get(
             "FINNEGANS_DOCS_MCP_URL",
