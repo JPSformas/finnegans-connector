@@ -94,3 +94,41 @@ class ChangeStore:
             )
         del self._pending[confirmacion_id]
         return pending
+
+
+_TIPOS_PY = {
+    "string": str,
+    "integer": int,
+    "number": (int, float),
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+def validar_body(body: dict | None, body_schema: dict | None) -> list[str]:
+    """Valida el body propuesto contra el requestBodySchema del endpoint."""
+    if body_schema is None:
+        return ["(sin schema: no se pudo verificar contra la documentacion)"]
+    body = body or {}
+    props = body_schema.get("properties", {}) or {}
+    requeridos = body_schema.get("required", []) or []
+    problemas: list[str] = []
+
+    for req in requeridos:
+        if req not in body:
+            problemas.append(f"Falta el campo requerido '{req}'.")
+
+    for campo, valor in body.items():
+        if campo not in props:
+            problemas.append(f"Campo desconocido '{campo}' (no existe en la documentacion).")
+            continue
+        tipo = props[campo].get("type")
+        py = _TIPOS_PY.get(tipo)
+        if py and valor is not None and not isinstance(valor, py):
+            # bool es subclase de int; evitar falso positivo con number/integer
+            if not (tipo in ("integer", "number") and isinstance(valor, bool) is False and isinstance(valor, (int, float))):
+                problemas.append(
+                    f"Campo '{campo}': se esperaba {tipo}, se recibio {type(valor).__name__}."
+                )
+    return problemas
