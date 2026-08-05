@@ -125,10 +125,14 @@ def validar_body(body: dict | None, body_schema: dict | None) -> list[str]:
             continue
         tipo = props[campo].get("type")
         py = _TIPOS_PY.get(tipo)
-        if py and valor is not None and not isinstance(valor, py):
-            # bool es subclase de int; evitar falso positivo con number/integer
-            if not (tipo in ("integer", "number") and isinstance(valor, bool) is False and isinstance(valor, (int, float))):
-                problemas.append(
-                    f"Campo '{campo}': se esperaba {tipo}, se recibio {type(valor).__name__}."
-                )
+        if py is None or valor is None:
+            continue
+        # bool NO es un numero valido en este dominio, aunque en Python sea subclase de int.
+        if tipo in ("integer", "number") and isinstance(valor, bool):
+            problemas.append(f"Campo '{campo}': se esperaba {tipo}, se recibio bool.")
+            continue
+        if not isinstance(valor, py):
+            problemas.append(
+                f"Campo '{campo}': se esperaba {tipo}, se recibio {type(valor).__name__}."
+            )
     return problemas

@@ -32,6 +32,14 @@ class TestValidarBody(unittest.TestCase):
         self.assertEqual(len(problemas), 1)
         self.assertIn("sin schema", problemas[0].lower())
 
+    def test_bool_para_number_es_error(self):
+        problemas = validar_body({"Codigo": "A", "Nombre": "X", "Limite": True}, SCHEMA)
+        self.assertTrue(any("Limite" in p for p in problemas))
+
+    def test_number_valido_ok(self):
+        self.assertEqual(validar_body({"Codigo": "A", "Nombre": "X", "Limite": 100}, SCHEMA), [])
+        self.assertEqual(validar_body({"Codigo": "A", "Nombre": "X", "Limite": 100.5}, SCHEMA), [])
+
 
 if __name__ == "__main__":
     unittest.main()
