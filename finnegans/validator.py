@@ -136,3 +136,39 @@ def validar_body(body: dict | None, body_schema: dict | None) -> list[str]:
                 f"Campo '{campo}': se esperaba {tipo}, se recibio {type(valor).__name__}."
             )
     return problemas
+
+
+def evaluar_riesgo(
+    metodo: str,
+    resource_id: str | None,
+    api_id: str,
+    allow_delete: bool,
+    high_risk_patterns: list[str],
+) -> tuple[bool, bool, str]:
+    """Determina si una escritura esta bloqueada o es de alto riesgo.
+
+    Retorna (bloqueado, alto_riesgo, motivo).
+    """
+    metodo = metodo.upper()
+    motivos: list[str] = []
+    alto = False
+
+    if metodo == "DELETE":
+        if not allow_delete:
+            return (True, True, "Operacion DELETE bloqueada por politica (FINNEGANS_ALLOW_DELETE=false).")
+        alto = True
+        motivos.append("es un DELETE (borrado)")
+
+    if metodo in ("PUT", "DELETE") and not resource_id:
+        alto = True
+        motivos.append("sin id: puede afectar multiples registros")
+
+    api_lower = (api_id or "").lower()
+    for pat in high_risk_patterns:
+        if pat.lower() in api_lower:
+            alto = True
+            motivos.append(f"endpoint sensible (coincide con '{pat}')")
+            break
+
+    motivo = "; ".join(motivos) if motivos else "operacion estandar"
+    return (False, alto, motivo)
