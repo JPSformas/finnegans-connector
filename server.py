@@ -30,8 +30,15 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from finnegans import FinnegansClient, FinnegansError
-from finnegans.discovery import DiscoveryError, get_api, list_methods, search_apis
-from finnegans.validator import READ_METHODS, ChangeStore, ValidationError, WRITE_METHODS
+from finnegans.config import Settings
+from finnegans.audit import AuditLog
+from finnegans.discovery import (
+    DiscoveryError, get_api, list_methods, search_apis, extraer_schema_escritura,
+)
+from finnegans.validator import (
+    READ_METHODS, ChangeStore, ValidationError, WRITE_METHODS,
+    evaluar_riesgo, validar_body, construir_preview, generar_codigo,
+)
 
 mcp = FastMCP(
     "finnegans-agent",
@@ -52,6 +59,8 @@ mcp = FastMCP(
 
 _client: FinnegansClient | None = None
 _changes = ChangeStore()
+_settings: Settings | None = None
+_audit: AuditLog | None = None
 
 
 def get_client() -> FinnegansClient:
@@ -59,6 +68,21 @@ def get_client() -> FinnegansClient:
     if _client is None:
         _client = FinnegansClient(timeout=30)
     return _client
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+
+def get_audit() -> AuditLog:
+    global _audit
+    if _audit is None:
+        s = get_settings()
+        _audit = AuditLog(s.audit_log_path, s.operator)
+    return _audit
 
 
 def _fmt(data: Any) -> str:
@@ -196,7 +220,7 @@ def consultar_finnegans(
 
 
 @mcp.tool()
-def preparar_cambio(
+async def preparar_cambio(
     api_id: str,
     metodo: str,
     id: str | None = None,
@@ -206,50 +230,59 @@ def preparar_cambio(
 ) -> str:
     """Prepara una ESCRITURA en Finnegans sin ejecutarla (POST/PUT/DELETE).
 
-    Devuelve un resumen y un ID de confirmacion. MOSTRAR el resumen al
-    usuario y ESPERAR que diga 'si' o 'confirmo' antes de llamar ejecutar_cambio.
-
-    Args:
-        api_id: id de la API.
-        metodo: POST (crear), PUT (actualizar), DELETE (eliminar).
-        id: codigo del registro (para PUT/DELETE o POST con path).
-        parametros: query params adicionales.
-        datos: body JSON con los datos a enviar.
-        descripcion: resumen en castellano de lo que se va a hacer.
+    Devuelve una vista previa VERIFICADA y un codigo de confirmacion.
+    MOSTRAR el preview al usuario y pedirle que tipee el codigo. Luego llamar
+    ejecutar_cambio con ese codigo.
     """
     metodo = metodo.upper()
+    settings = get_settings()
+    audit = get_audit()
+
     if metodo not in WRITE_METHODS:
-        return (
-            f"Metodo '{metodo}' no es de escritura. "
-            f"Usa consultar_finnegans para lecturas."
-        )
+        return "Metodo no es de escritura. Usa consultar_finnegans para lecturas."
 
-    resumen = descripcion or f"{metodo} en {api_id}"
-    if id:
-        resumen += f" (id: {id})"
-    if datos:
-        preview = _truncate(datos, 500)
-        resumen += f"\nDatos: {preview}"
+    bloqueado, alto_riesgo, motivo = evaluar_riesgo(
+        metodo, id, api_id, settings.allow_delete, settings.high_risk_patterns
+    )
+    if bloqueado:
+        audit.record("rechazado", metodo=metodo, api_id=api_id, resource_id=id,
+                     parametros=parametros, body=datos, resultado="bloqueado", detalle=motivo)
+        return f"OPERACION BLOQUEADA: {motivo}"
 
+    # Traer schema del endpoint (degradar con aviso si falla)
+    campos_body: list[str] = []
+    body_schema = None
     try:
-        pending = _changes.prepare(
-            api_id=api_id,
-            metodo=metodo,
-            resource_id=id,
-            parametros=parametros,
-            body=datos,
-            resumen=resumen,
-        )
-        return (
-            f"PENDIENTE DE CONFIRMACION\n"
-            f"ID: {pending.confirmacion_id}\n"
-            f"Accion: {resumen}\n\n"
-            f"Mostrale esto al usuario y preguntale si confirma. "
-            f"Si dice SI, llama ejecutar_cambio con "
-            f"confirmacion_id='{pending.confirmacion_id}' y usuario_confirmo=true."
-        )
-    except ValidationError as e:
-        return f"Error: {e}"
+        spec = await get_api(api_id)
+        if isinstance(spec, dict):
+            info = extraer_schema_escritura(spec, metodo)
+            campos_body = info["campos_body"]
+            body_schema = info["body_schema"]
+    except (DiscoveryError, RuntimeError):
+        body_schema = None  # validar_body avisara "sin schema"
+
+    problemas = validar_body(datos, body_schema) if metodo in ("POST", "PUT") else []
+    codigo = generar_codigo()
+    preview = construir_preview(
+        api_id, metodo, id, parametros, datos, campos_body, problemas,
+        alto_riesgo, motivo, codigo,
+    )
+
+    pending = _changes.prepare(
+        api_id=api_id, metodo=metodo, resource_id=id, parametros=parametros,
+        body=datos, resumen=descripcion or f"{metodo} en {api_id}",
+        codigo=codigo, preview=preview, alto_riesgo=alto_riesgo,
+    )
+    audit.record("preparado", metodo=metodo, api_id=api_id, resource_id=id,
+                 parametros=parametros, body=datos,
+                 confirmacion_id=pending.confirmacion_id, detalle=motivo)
+
+    return (
+        f"{preview}\n\n"
+        f"confirmacion_id: {pending.confirmacion_id}\n"
+        f"Cuando el usuario tipee el codigo, llama ejecutar_cambio con "
+        f"confirmacion_id='{pending.confirmacion_id}' y codigo_confirmacion=<lo que tipeo>."
+    )
 
 
 @mcp.tool()
