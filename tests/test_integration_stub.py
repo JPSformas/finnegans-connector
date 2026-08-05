@@ -29,7 +29,8 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/oauth/token"):
             self._send(200, {"access_token": "x" * 36})
         elif "/api/cliente/" in self.path:
-            self._send(200, self.creado or {"_leido": True})
+            base = self.creado if self.creado else {"_leido": True}
+            self._send(200, {**base, "_via_get": "READBACK"})
         else:
             self._send(404, {"error": "no encontrado"})
 
@@ -73,6 +74,7 @@ class TestIntegracionStub(unittest.TestCase):
         server.get_api = self._orig
         server._client = None
         self.httpd.shutdown()
+        self.httpd.server_close()
         self.dir.cleanup()
 
     def test_ciclo_completo_crear_cliente(self):
@@ -82,7 +84,9 @@ class TestIntegracionStub(unittest.TestCase):
 
         res = server.ejecutar_cambio(cid, codigo)
         self.assertIn("EJECUTADO", res)
-        self.assertIn("77", res)  # el read-back leyo el registro creado
+        readback = res.split("Verificacion posterior:", 1)[1]
+        self.assertIn("_via_get", readback)  # prueba que _read_back re-leyo via GET
+        self.assertIn("77", readback)  # y que leyo el registro creado
 
 
 if __name__ == "__main__":
