@@ -2,6 +2,11 @@
 .env
 *.env
 !.env.example
+!service-credentials.env.example
+service-credentials.env
+
+# Auditoria (logs locales, no versionar)
+audit/
 
 # Python
 __pycache__/
