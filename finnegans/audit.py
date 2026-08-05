@@ -22,7 +22,7 @@ def _redact(value: Any) -> Any:
             else:
                 out[k] = _redact(v)
         return out
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [_redact(v) for v in value]
     return value
 
