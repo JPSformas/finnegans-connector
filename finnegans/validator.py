@@ -5,6 +5,7 @@ y solo se ejecutan cuando el usuario confirma explicitamente.
 """
 from __future__ import annotations
 
+import secrets
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -30,6 +31,9 @@ class PendingChange:
     parametros: dict[str, Any]
     body: Any
     resumen: str
+    codigo: str = ""
+    preview: str = ""
+    alto_riesgo: bool = False
     creado_en: float = field(default_factory=time.time)
     expira_en: float = field(default_factory=lambda: time.time() + 600)
 
@@ -56,6 +60,9 @@ class ChangeStore:
         parametros: dict[str, Any] | None,
         body: Any,
         resumen: str,
+        codigo: str = "",
+        preview: str = "",
+        alto_riesgo: bool = False,
     ) -> PendingChange:
         self._cleanup()
         metodo = metodo.upper()
@@ -64,7 +71,6 @@ class ChangeStore:
                 f"Metodo '{metodo}' no es de escritura. "
                 f"Usa consultar_finnegans para lecturas (GET)."
             )
-
         confirmacion_id = str(uuid.uuid4())[:8]
         pending = PendingChange(
             confirmacion_id=confirmacion_id,
@@ -74,26 +80,77 @@ class ChangeStore:
             parametros=parametros or {},
             body=body,
             resumen=resumen,
+            codigo=codigo,
+            preview=preview,
+            alto_riesgo=alto_riesgo,
             expira_en=time.time() + self.TTL_SECONDS,
         )
         self._pending[confirmacion_id] = pending
         return pending
 
-    def consume(self, confirmacion_id: str, usuario_confirmo: bool) -> PendingChange:
+    def consume(self, confirmacion_id: str, codigo_tipeado: str) -> PendingChange:
         self._cleanup()
-        if not usuario_confirmo:
-            raise ValidationError(
-                "La operacion NO fue ejecutada: el usuario no confirmo. "
-                "El lider debe responder explicitamente 'si, confirmo' antes de ejecutar."
-            )
         pending = self._pending.get(confirmacion_id)
         if not pending:
             raise ValidationError(
                 f"Confirmacion '{confirmacion_id}' no encontrada o expirada. "
-                "Volvé a preparar el cambio con preparar_cambio."
+                "Volve a preparar el cambio con preparar_cambio."
+            )
+        if str(codigo_tipeado).strip() != pending.codigo:
+            raise ValidationError(
+                "Codigo de confirmacion incorrecto. La operacion NO se ejecuto. "
+                "Pedile al usuario que tipee exactamente el codigo mostrado en el resumen."
             )
         del self._pending[confirmacion_id]
         return pending
+
+
+def generar_codigo() -> str:
+    """Codigo corto de confirmacion (4 digitos) que el humano debe tipear."""
+    return f"{secrets.randbelow(10000):04d}"
+
+
+def construir_preview(
+    api_id: str,
+    metodo: str,
+    resource_id: str | None,
+    parametros: dict | None,
+    body: dict | None,
+    campos_body: list[str],
+    problemas: list[str],
+    alto_riesgo: bool,
+    motivo: str,
+    codigo: str,
+) -> str:
+    """Arma la vista previa estructurada, campo por campo, para el usuario."""
+    lineas = ["=== CONFIRMACION DE CAMBIO ==="]
+    if alto_riesgo:
+        lineas.append(f"⚠️  ALTO RIESGO: {motivo}")
+    lineas.append(f"Operacion: {metodo}  |  Endpoint: {api_id}")
+    if resource_id:
+        lineas.append(f"Registro afectado (id): {resource_id}")
+
+    if parametros:
+        lineas.append("Parametros:")
+        for k, v in parametros.items():
+            if k == "ACCESS_TOKEN":
+                continue
+            lineas.append(f"  - {k}: {v}")
+
+    if body:
+        lineas.append("Datos a enviar:")
+        for k, v in body.items():
+            marca = "" if (not campos_body or k in campos_body) else "  ⚠️ (campo no documentado)"
+            lineas.append(f"  - {k}: {v}{marca}")
+
+    if problemas:
+        lineas.append("Advertencias de validacion:")
+        for p in problemas:
+            lineas.append(f"  ⚠️ {p}")
+
+    lineas.append("")
+    lineas.append(f"Para EJECUTAR, el usuario debe tipear este codigo: {codigo}")
+    return "\n".join(lineas)
 
 
 _TIPOS_PY = {
