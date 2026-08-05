@@ -1,0 +1,89 @@
+# tests/test_integration_stub.py
+import asyncio
+import json
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+import server
+from finnegans.audit import AuditLog
+from finnegans.client import FinnegansClient
+from finnegans.config import Settings
+
+
+class _Handler(BaseHTTPRequestHandler):
+    creado = {}
+
+    def _send(self, code, obj):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(obj).encode("utf-8"))
+
+    def log_message(self, *a):  # silenciar
+        pass
+
+    def do_GET(self):
+        if self.path.startswith("/api/oauth/token"):
+            self._send(200, {"access_token": "x" * 36})
+        elif "/api/cliente/" in self.path:
+            self._send(200, self.creado or {"_leido": True})
+        else:
+            self._send(404, {"error": "no encontrado"})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        _Handler.creado = {"Codigo": "77", **body}
+        self._send(200, _Handler.creado)
+
+
+class TestIntegracionStub(unittest.TestCase):
+    def setUp(self):
+        self.httpd = HTTPServer(("127.0.0.1", 0), _Handler)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{self.port}"
+
+        s = Settings(load_env=False)
+        s.base_url = base
+        s.client_id = "id"
+        s.client_secret = "sec"
+        self.dir = tempfile.TemporaryDirectory()
+
+        server._client = FinnegansClient(settings=s)
+        server._audit = AuditLog(str(Path(self.dir.name) / "a.jsonl"), "TEST")
+        server._changes.__init__()
+
+        class _S:
+            allow_delete = False
+            high_risk_patterns = []
+        server.get_settings = lambda: _S()
+
+        async def fake_get_api(api_id):
+            return {"request_structure": {"paths": {"/api/cliente": {"post": {
+                "requestBodySchema": {"required": ["Nombre"],
+                                       "properties": {"Nombre": {"type": "string"}}}}}}}}
+        self._orig = server.get_api
+        server.get_api = fake_get_api
+
+    def tearDown(self):
+        server.get_api = self._orig
+        server._client = None
+        self.httpd.shutdown()
+        self.dir.cleanup()
+
+    def test_ciclo_completo_crear_cliente(self):
+        out = asyncio.run(server.preparar_cambio("cliente", "POST", datos={"Nombre": "ACME"}))
+        cid = [l for l in out.splitlines() if l.startswith("confirmacion_id:")][0].split(":")[1].strip()
+        codigo = list(server._changes._pending.values())[0].codigo
+
+        res = server.ejecutar_cambio(cid, codigo)
+        self.assertIn("EJECUTADO", res)
+        self.assertIn("77", res)  # el read-back leyo el registro creado
+
+
+if __name__ == "__main__":
+    unittest.main()
