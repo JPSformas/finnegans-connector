@@ -48,10 +48,10 @@ mcp = FastMCP(
         "1. Antes de consultar o modificar, usa buscar_api y ver_api para "
         "descubrir el endpoint correcto y sus parametros.\n"
         "2. Para LECTURAS usa consultar_finnegans (solo GET).\n"
-        "3. Para ESCRITURAS usa preparar_cambio, mostra el resumen al usuario "
-        "y ESPERA confirmacion explicita ('si', 'confirmo').\n"
-        "4. Solo despues de confirmacion llama ejecutar_cambio con "
-        "usuario_confirmo=true.\n"
+        "3. Para ESCRITURAS usa preparar_cambio, mostra el PREVIEW completo al "
+        "usuario (incluye un codigo de confirmacion) y pedile que tipee ese codigo.\n"
+        "4. Solo cuando el usuario tipee el codigo, llama ejecutar_cambio con "
+        "ese codigo_confirmacion. NUNCA inventes ni adivines el codigo.\n"
         "5. NUNCA ejecutes escrituras sin confirmacion del usuario.\n"
         "6. Responde siempre en castellano claro, sin tecnicismos."
     ),
@@ -286,27 +286,63 @@ async def preparar_cambio(
 
 
 @mcp.tool()
-def ejecutar_cambio(confirmacion_id: str, usuario_confirmo: bool) -> str:
-    """Ejecuta un cambio SOLO si el usuario confirmo explicitamente.
+def ejecutar_cambio(confirmacion_id: str, codigo_confirmacion: str) -> str:
+    """Ejecuta un cambio SOLO si el usuario tipeo el codigo de confirmacion correcto.
 
     Args:
         confirmacion_id: ID devuelto por preparar_cambio.
-        usuario_confirmo: DEBE ser true. Si es false, no ejecuta nada.
+        codigo_confirmacion: el codigo que el USUARIO tipeo (no lo inventes).
     """
+    audit = get_audit()
     try:
-        pending = _changes.consume(confirmacion_id, usuario_confirmo)
-        data = get_client().request(
-            pending.metodo,
-            pending.api_id,
-            id=pending.resource_id,
-            params=pending.parametros,
-            body=pending.body,
-        )
-        return f"CAMBIO EJECUTADO OK\n{_truncate(data)}"
+        pending = _changes.consume(confirmacion_id, codigo_confirmacion)
     except ValidationError as e:
+        audit.record("rechazado", confirmacion_id=confirmacion_id,
+                     codigo_ok=False, resultado="codigo/expiracion", detalle=str(e))
         return f"No ejecutado: {e}"
+
+    try:
+        data = get_client().request(
+            pending.metodo, pending.api_id, id=pending.resource_id,
+            params=pending.parametros, body=pending.body,
+        )
     except FinnegansError as e:
+        audit.record("error", metodo=pending.metodo, api_id=pending.api_id,
+                     resource_id=pending.resource_id, confirmacion_id=confirmacion_id,
+                     codigo_ok=True, resultado="error_api", detalle=str(e))
         return f"Error al ejecutar: {e}"
+
+    # Read-back (verificacion posterior)
+    verificacion = _read_back(pending, data)
+
+    audit.record("ejecutado", metodo=pending.metodo, api_id=pending.api_id,
+                 resource_id=pending.resource_id, confirmacion_id=confirmacion_id,
+                 codigo_ok=True, resultado="OK", detalle=verificacion)
+
+    return (
+        f"CAMBIO EJECUTADO OK\n{_truncate(data)}\n\n"
+        f"Verificacion posterior:\n{verificacion}"
+    )
+
+
+def _read_back(pending, data) -> str:
+    """Relee el registro afectado para confirmar el estado resultante."""
+    try:
+        rid = pending.resource_id
+        if pending.metodo == "POST" and isinstance(data, dict):
+            rid = data.get("Codigo") or data.get("Id") or data.get("id") or rid
+        if not rid:
+            return "(no se pudo identificar el registro para releer)"
+        if pending.metodo == "DELETE":
+            try:
+                get_client().request("GET", pending.api_id, id=rid)
+                return f"AVISO: el registro {rid} todavia responde a GET tras el DELETE."
+            except FinnegansError:
+                return f"Confirmado: el registro {rid} ya no existe (DELETE OK)."
+        leido = get_client().request("GET", pending.api_id, id=rid)
+        return _truncate(leido, 800)
+    except FinnegansError as e:
+        return f"(no se pudo releer: {e})"
 
 
 if __name__ == "__main__":
