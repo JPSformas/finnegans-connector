@@ -33,9 +33,10 @@ de listado ni de reportes**. Investigación de causa raíz (GET crudos contra
   los reportes.
 - **La documentación buena** es el Swagger de `oneteam.finneg.com`, cuyo spec
   OpenAPI crudo es **fetcheable por HTTP** (sin JS) en:
-  `https://oneteam.finneg.com/BSA/api/swaggerGlobal?key=435f45445548`
+  `https://oneteam.finneg.com/BSA/api/swaggerGlobal?key=<FINNEGANS_SWAGGER_KEY>`
   → JSON de ~1 MB, **538 paths**, con 93 endpoints `/{entidad}/list` y toda la
-  familia `/reports/{Nombre}`. El `key` es **estable** (confirmado por el dueño).
+  familia `/reports/{Nombre}`. El `key` (en `.env`, `FINNEGANS_SWAGGER_KEY`) es
+  **estable** (confirmado por el dueño); no se versiona su valor real.
 
 Conclusión: el problema no era de código HTTP sino de **fuente de verdad**. Se
 re-apunta el descubrimiento al spec de `swaggerGlobal`.
@@ -164,8 +165,9 @@ datos arma la consulta. Nunca asume una sucursal por defecto.
 
 ## Riesgos y supuestos
 
-- **Supuesto:** `key=435f45445548` estable (confirmado). Si algún día rota, se
-  actualiza `.env`; el conector debe fallar con mensaje claro, no en silencio.
+- **Supuesto:** el `FINNEGANS_SWAGGER_KEY` (en `.env`, no versionado) es estable
+  (confirmado). Si algún día rota, se actualiza `.env`; el conector debe fallar
+  con mensaje claro, no en silencio.
 - **Supuesto:** el spec de `swaggerGlobal` refleja lo que la cuenta productiva
   expone. Los paths clave (`cliente/list`, `sucursal/list`) ya se verificaron
   200 contra el ERP real.
