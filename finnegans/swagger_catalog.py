@@ -9,7 +9,6 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
 
 
 class SwaggerError(Exception):
@@ -20,7 +19,7 @@ _SPEC_CACHE: dict[str, dict] = {}
 
 
 def _fetch_spec(url: str, key: str, timeout: int = 60) -> dict:
-    full = f"{url}?key={urllib.parse.quote(key)}"
+    full = f"{url}?key={urllib.parse.quote(key, safe='')}"
     req = urllib.request.Request(full, headers={"Accept": "application/json"}, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
