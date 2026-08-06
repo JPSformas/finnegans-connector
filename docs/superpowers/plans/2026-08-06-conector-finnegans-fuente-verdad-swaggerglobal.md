@@ -95,10 +95,13 @@ Agregar al final:
 
 ```env
 # Documentacion OpenAPI completa (fuente de verdad de endpoints).
-# El key es de solo lectura de documentacion y es estable.
+# El key es de solo lectura de documentacion y es estable; pedirselo a IT.
 FINNEGANS_SWAGGER_URL=https://oneteam.finneg.com/BSA/api/swaggerGlobal
-FINNEGANS_SWAGGER_KEY=435f45445548
+FINNEGANS_SWAGGER_KEY=tu_swagger_key
 ```
+
+> Nota: usar **placeholder** (`tu_swagger_key`), NO el valor real — `.env.example`
+> está versionado. El valor real va solo en el `.env` local.
 
 - [ ] **Step 6: Commit**
 
