@@ -181,11 +181,11 @@ def consultar_finnegans(
 ) -> str:
     """Consulta de LECTURA a Finnegans (solo GET).
 
-    Args:
-        api_id: id de la API (ej. "producto", "ACOrdenesCompraPendientes").
-        metodo: debe ser GET (lectura).
-        id: codigo del registro en el path (si la API lo requiere).
-        parametros: filtros adicionales como query params (ej. FechaDesde).
+    api_id puede ser:
+      - un recurso con codigo:  api_id='cliente', id='P01093'  -> /api/cliente/P01093
+      - un listado:             api_id='cliente/list'          -> /api/cliente/list
+      - un reporte:             api_id='reports/analisisFacturaVenta'
+    parametros: filtros adicionales como query params (ej. FechaDesde).
     """
     metodo = metodo.upper()
     if metodo not in READ_METHODS:
@@ -197,7 +197,14 @@ def consultar_finnegans(
         data = get_client().request(metodo, api_id, id=id, params=parametros)
         return _truncate(data)
     except FinnegansError as e:
-        return f"Error en consulta: {e}"
+        msg = str(e)
+        if "id missing" in msg.lower():
+            return (
+                f"El endpoint '{api_id}' requiere un codigo en el path "
+                f"(ej. '{api_id}/CODIGO'), o usa la operacion de listado "
+                f"'{api_id}/list'."
+            )
+        return f"Error en consulta: {msg}"
 
 
 @mcp.tool()
