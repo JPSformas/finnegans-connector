@@ -79,3 +79,55 @@ def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
             })
     resultados.sort(key=lambda x: x["score"], reverse=True)
     return resultados[:limite]
+
+
+def resolver_ref(spec: dict, schema: dict) -> dict:
+    if isinstance(schema, dict) and "$ref" in schema:
+        ref = schema["$ref"]  # ej. "#/definitions/ClienteBody"
+        nombre = ref.split("/")[-1]
+        return (spec.get("definitions") or {}).get(nombre, {})
+    return schema or {}
+
+
+def _primer_segmento(path: str) -> str:
+    return path.strip("/").split("/")[0]
+
+
+def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
+    objetivo = recurso.strip("/")
+    ops: list[dict] = []
+    for path, metodos in (spec.get("paths") or {}).items():
+        if not isinstance(metodos, dict):
+            continue
+        coincide = path.strip("/") == objetivo or _primer_segmento(path) == objetivo
+        if not coincide:
+            continue
+        for m, detail in metodos.items():
+            if m.lower() not in _METODOS_HTTP or not isinstance(detail, dict):
+                continue
+            params, tiene_body, campos, requeridos = [], False, [], []
+            for p in detail.get("parameters") or []:
+                if not isinstance(p, dict):
+                    continue
+                if p.get("in") == "body":
+                    tiene_body = True
+                    body_schema = resolver_ref(spec, p.get("schema") or {})
+                    campos = list((body_schema.get("properties") or {}).keys())
+                    requeridos = list(body_schema.get("required") or [])
+                elif p.get("name") != "ACCESS_TOKEN":
+                    params.append({
+                        "nombre": p.get("name"),
+                        "requerido": bool(p.get("required", False)),
+                        "ubicacion": p.get("in"),
+                        "descripcion": p.get("description", ""),
+                    })
+            ops.append({
+                "metodo": m.upper(),
+                "path": path,
+                "resumen": detail.get("summary", ""),
+                "parametros": params,
+                "tiene_body": tiene_body,
+                "body_campos": campos,
+                "body_requeridos": requeridos,
+            })
+    return ops

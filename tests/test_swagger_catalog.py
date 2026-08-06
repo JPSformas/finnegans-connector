@@ -123,5 +123,34 @@ class TestBuscarEndpoints(unittest.TestCase):
         self.assertEqual(sc.buscar_endpoints(SPEC, "zzz-inexistente"), [])
 
 
+class TestVerEndpoint(unittest.TestCase):
+    def test_operaciones_de_cliente(self):
+        ops = sc.ver_endpoint(SPEC, "cliente")
+        pares = {(o["metodo"], o["path"]) for o in ops}
+        self.assertIn(("GET", "/cliente/list"), pares)
+        self.assertIn(("GET", "/cliente/{codigo}"), pares)
+        self.assertIn(("POST", "/cliente"), pares)
+
+    def test_params_excluyen_access_token_y_body(self):
+        ops = sc.ver_endpoint(SPEC, "cliente")
+        get_id = next(o for o in ops if o["path"] == "/cliente/{codigo}")
+        nombres = [p["nombre"] for p in get_id["parametros"]]
+        self.assertIn("codigo", nombres)
+        self.assertNotIn("ACCESS_TOKEN", nombres)
+
+    def test_body_schema_resuelto_por_ref(self):
+        ops = sc.ver_endpoint(SPEC, "cliente")
+        post = next(o for o in ops if o["metodo"] == "POST")
+        self.assertTrue(post["tiene_body"])
+        self.assertEqual(sorted(post["body_campos"]), ["Codigo", "Limite", "Nombre"])
+        self.assertEqual(sorted(post["body_requeridos"]), ["Codigo", "Nombre"])
+
+    def test_recurso_por_path_exacto_de_reporte(self):
+        ops = sc.ver_endpoint(SPEC, "reports/analisisFacturaVenta")
+        self.assertEqual(len(ops), 1)
+        params = [p["nombre"] for p in ops[0]["parametros"]]
+        self.assertIn("FechaDesde", params)
+
+
 if __name__ == "__main__":
     unittest.main()
