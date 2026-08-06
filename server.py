@@ -30,6 +30,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from finnegans import FinnegansClient, FinnegansError
+from finnegans import swagger_catalog
 from finnegans.config import Settings
 from finnegans.audit import AuditLog
 from finnegans.discovery import (
@@ -120,75 +121,55 @@ async def verificar_conexion() -> str:
 
 
 @mcp.tool()
-async def buscar_api(consulta: str) -> str:
-    """Busca APIs de Finnegans por nombre, id o descripcion.
+def buscar_api(consulta: str) -> str:
+    """Busca APIs de Finnegans por nombre, id o descripcion (usa la doc OpenAPI oficial).
 
     Usar PRIMERO cuando el usuario pide algo y no sabes que endpoint usar.
-    Ejemplo: consulta="ordenes compra pendientes" o "saldo cliente".
     """
+    s = get_settings()
     try:
-        result = await search_apis(consulta)
-        if not isinstance(result, dict):
-            return _fmt(result)
-
-        if result.get("status") == "not_found":
-            return f"No se encontraron APIs para '{consulta}'."
-
-        candidates = result.get("results", [])
-        summary = []
-        for c in candidates[:8]:
-            summary.append(
-                f"- {c.get('id')} ({c.get('confidence', '?')}%): "
-                f"{c.get('description', c.get('title', ''))}"
-            )
-        header = f"Encontradas {result.get('count', len(candidates))} APIs para '{consulta}':\n"
-        return header + "\n".join(summary) + "\n\nUsa ver_api con el 'id' elegido."
-    except (DiscoveryError, RuntimeError) as e:
-        return f"Error buscando APIs: {e}"
+        s.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(s.swagger_url, s.swagger_key)
+    except (RuntimeError, swagger_catalog.SwaggerError) as e:
+        return f"No pude acceder a la documentacion de APIs: {e}"
+    resultados = swagger_catalog.buscar_endpoints(spec, consulta)
+    if not resultados:
+        return f"No se encontraron endpoints para '{consulta}'."
+    lineas = [f"Encontrados {len(resultados)} endpoints para '{consulta}':"]
+    for r in resultados:
+        lineas.append(f"- {r['path']}  ({', '.join(r['metodos'])})  {r['resumen']}")
+    lineas.append("\nUsa ver_api con el 'path' o el nombre del recurso (ej. 'cliente').")
+    return "\n".join(lineas)
 
 
 @mcp.tool()
-async def ver_api(api_id: str) -> str:
-    """Obtiene la especificacion de una API: metodos, parametros y body.
+def ver_api(api_id: str) -> str:
+    """Muestra las operaciones reales de un recurso: metodos, paths y parametros.
 
-    Llamar DESPUES de buscar_api para saber como invocar el endpoint.
+    api_id puede ser un recurso ('cliente') o un path exacto ('reports/analisisFacturaVenta').
     """
+    s = get_settings()
     try:
-        result = await get_api(api_id)
-        if not isinstance(result, dict):
-            return _fmt(result)
-
-        if result.get("status") == "not_found":
-            return f"API '{api_id}' no encontrada."
-
-        if result.get("status") == "ambiguous":
-            candidates = result.get("candidates", [])
-            lines = [f"API '{api_id}' es ambigua. Candidatos:"]
-            for c in candidates[:5]:
-                lines.append(f"  - {c.get('id')}: {c.get('description', '')}")
-            return "\n".join(lines)
-
-        methods = list_methods(result)
-        if not methods:
-            return (
-                f"API '{api_id}' encontrada pero sin metodos documentados. "
-                "Proba consultar_finnegans con GET y el id del recurso."
-            )
-
-        lines = [f"API: {api_id}\nMetodos disponibles:\n"]
-        for m in methods:
-            lines.append(f"  {m['metodo']} {m['path']} — {m['resumen']}")
-            if m["parametros"]:
-                params = ", ".join(
-                    f"{p['nombre']}{'*' if p['requerido'] else ''}" for p in m["parametros"]
-                )
-                lines.append(f"    Parametros: {params}")
-            if m["tiene_body"]:
-                lines.append("    Requiere body JSON (ver schema en ver_api completo)")
-        lines.append("\nPara leer: consultar_finnegans. Para escribir: preparar_cambio.")
-        return "\n".join(lines)
-    except (DiscoveryError, RuntimeError) as e:
-        return f"Error obteniendo API: {e}"
+        s.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(s.swagger_url, s.swagger_key)
+    except (RuntimeError, swagger_catalog.SwaggerError) as e:
+        return f"No pude acceder a la documentacion de APIs: {e}"
+    ops = swagger_catalog.ver_endpoint(spec, api_id)
+    if not ops:
+        return (f"No encontre operaciones para '{api_id}'. "
+                "Proba buscar_api para ver el nombre exacto del recurso.")
+    lineas = [f"Operaciones de '{api_id}':\n"]
+    for o in ops:
+        lineas.append(f"  {o['metodo']} /api{o['path']} — {o['resumen']}")
+        if o["parametros"]:
+            ps = ", ".join(f"{p['nombre']}{'*' if p['requerido'] else ''} ({p['ubicacion']})"
+                           for p in o["parametros"])
+            lineas.append(f"    Parametros: {ps}")
+        if o["tiene_body"]:
+            req = ", ".join(o["body_requeridos"]) or "(sin requeridos)"
+            lineas.append(f"    Body: campos {o['body_campos']} | requeridos: {req}")
+    lineas.append("\nPara leer: consultar_finnegans. Para escribir: preparar_cambio.")
+    return "\n".join(lineas)
 
 
 @mcp.tool()

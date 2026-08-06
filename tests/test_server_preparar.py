@@ -24,10 +24,12 @@ class TestPrepararCambio(unittest.TestCase):
         class _S:
             allow_delete = False
             high_risk_patterns = []
+        self._orig_get_settings = server.get_settings
         server.get_settings = lambda: _S()
 
     def tearDown(self):
         server.get_api = self._orig
+        server.get_settings = self._orig_get_settings
         self.dir.cleanup()
 
     def test_delete_bloqueado_no_crea_pendiente(self):

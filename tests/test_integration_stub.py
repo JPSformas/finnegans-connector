@@ -61,6 +61,7 @@ class TestIntegracionStub(unittest.TestCase):
         class _S:
             allow_delete = False
             high_risk_patterns = []
+        self._orig_get_settings = server.get_settings
         server.get_settings = lambda: _S()
 
         async def fake_get_api(api_id):
@@ -72,6 +73,7 @@ class TestIntegracionStub(unittest.TestCase):
 
     def tearDown(self):
         server.get_api = self._orig
+        server.get_settings = self._orig_get_settings
         server._client = None
         self.httpd.shutdown()
         self.httpd.server_close()
