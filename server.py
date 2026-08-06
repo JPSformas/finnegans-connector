@@ -34,7 +34,7 @@ from finnegans import swagger_catalog
 from finnegans.config import Settings
 from finnegans.audit import AuditLog
 from finnegans.discovery import (
-    DiscoveryError, list_methods, search_apis,
+    DiscoveryError, search_apis,
 )
 from finnegans.validator import (
     READ_METHODS, ChangeStore, ValidationError, WRITE_METHODS,
