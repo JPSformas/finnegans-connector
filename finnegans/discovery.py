@@ -57,6 +57,7 @@ async def search_apis(query: str) -> dict[str, Any]:
     return await _call_docs_tool("search_apis", {"query": query})
 
 
+# No se invalida a proposito: el proceso MCP se reinicia al actualizar (modelo de despliegue).
 _api_cache: dict[str, Any] = {}
 
 

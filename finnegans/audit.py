@@ -6,25 +6,11 @@ Nunca escribe tokens ni secretos.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-_SENSIBLE = ("access_token", "token", "secret", "password", "client_secret")
-
-
-def _redact(value: Any) -> Any:
-    if isinstance(value, dict):
-        out = {}
-        for k, v in value.items():
-            if any(s in str(k).lower() for s in _SENSIBLE):
-                out[k] = "***"
-            else:
-                out[k] = _redact(v)
-        return out
-    if isinstance(value, (list, tuple)):
-        return [_redact(v) for v in value]
-    return value
+from .redaction import redactar
 
 
 class AuditLog:
@@ -49,18 +35,18 @@ class AuditLog:
         detalle: Any = None,
     ) -> None:
         rec = {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "operador": self.operator,
             "evento": evento,
             "metodo": metodo,
             "api_id": api_id,
             "resource_id": resource_id,
-            "parametros": _redact(parametros or {}),
-            "body": _redact(body),
+            "parametros": redactar(parametros or {}),
+            "body": redactar(body),
             "confirmacion_id": confirmacion_id,
             "codigo_ok": codigo_ok,
             "resultado": resultado,
-            "detalle": _redact(detalle),
+            "detalle": redactar(detalle),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:

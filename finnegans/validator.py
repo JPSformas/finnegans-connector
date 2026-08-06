@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .redaction import es_clave_sensible
+
 
 class ValidationError(Exception):
     """Error en el flujo de validacion."""
@@ -34,6 +36,7 @@ class PendingChange:
     codigo: str = ""
     preview: str = ""
     alto_riesgo: bool = False
+    intentos: int = 0
     creado_en: float = field(default_factory=time.time)
     expira_en: float = field(default_factory=lambda: time.time() + 600)
 
@@ -97,6 +100,13 @@ class ChangeStore:
                 "Volve a preparar el cambio con preparar_cambio."
             )
         if str(codigo_tipeado).strip() != pending.codigo:
+            pending.intentos += 1
+            if pending.intentos >= 3:
+                del self._pending[confirmacion_id]
+                raise ValidationError(
+                    "Codigo de confirmacion incorrecto por tercera vez. La operacion "
+                    "se INVALIDO por seguridad. Volve a preparar el cambio con preparar_cambio."
+                )
             raise ValidationError(
                 "Codigo de confirmacion incorrecto. La operacion NO se ejecuto. "
                 "Pedile al usuario que tipee exactamente el codigo mostrado en el resumen."
@@ -135,13 +145,15 @@ def construir_preview(
         for k, v in parametros.items():
             if k == "ACCESS_TOKEN":
                 continue
-            lineas.append(f"  - {k}: {v}")
+            valor = "***" if es_clave_sensible(k) else v
+            lineas.append(f"  - {k}: {valor}")
 
     if body:
         lineas.append("Datos a enviar:")
         for k, v in body.items():
             marca = "" if (not campos_body or k in campos_body) else "  ⚠️ (campo no documentado)"
-            lineas.append(f"  - {k}: {v}{marca}")
+            valor = "***" if es_clave_sensible(k) else v
+            lineas.append(f"  - {k}: {valor}{marca}")
 
     if problemas:
         lineas.append("Advertencias de validacion:")
@@ -180,6 +192,9 @@ def validar_body(body: dict | None, body_schema: dict | None) -> list[str]:
         if campo not in props:
             problemas.append(f"Campo desconocido '{campo}' (no existe en la documentacion).")
             continue
+        if not isinstance(props[campo], dict):
+            # Entrada de propiedad malformada en el schema: no se puede verificar tipo.
+            continue
         tipo = props[campo].get("type")
         py = _TIPOS_PY.get(tipo)
         if py is None or valor is None:
@@ -216,7 +231,7 @@ def evaluar_riesgo(
         alto = True
         motivos.append("es un DELETE (borrado)")
 
-    if metodo in ("PUT", "DELETE") and not resource_id:
+    if metodo in ("PUT", "DELETE", "PATCH") and not resource_id:
         alto = True
         motivos.append("sin id: puede afectar multiples registros")
 

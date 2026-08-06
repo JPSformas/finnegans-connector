@@ -261,7 +261,7 @@ async def preparar_cambio(
     except (DiscoveryError, RuntimeError):
         body_schema = None  # validar_body avisara "sin schema"
 
-    problemas = validar_body(datos, body_schema) if metodo in ("POST", "PUT") else []
+    problemas = validar_body(datos, body_schema) if metodo in ("POST", "PUT", "PATCH") else []
     codigo = generar_codigo()
     preview = construir_preview(
         api_id, metodo, id, parametros, datos, campos_body, problemas,
@@ -313,36 +313,46 @@ def ejecutar_cambio(confirmacion_id: str, codigo_confirmacion: str) -> str:
         return f"Error al ejecutar: {e}"
 
     # Read-back (verificacion posterior)
-    verificacion = _read_back(pending, data)
+    rid_efectivo, verificacion = _read_back(pending, data)
 
+    # Pasamos la verificacion CRUDA (dict para POST/PUT) para que redactar()
+    # pueda enmascarar secretos antes de persistir en el log de auditoria.
     audit.record("ejecutado", metodo=pending.metodo, api_id=pending.api_id,
-                 resource_id=pending.resource_id, confirmacion_id=confirmacion_id,
+                 resource_id=rid_efectivo, confirmacion_id=confirmacion_id,
                  codigo_ok=True, resultado="OK", detalle=verificacion)
 
     return (
         f"CAMBIO EJECUTADO OK\n{_truncate(data)}\n\n"
-        f"Verificacion posterior:\n{verificacion}"
+        f"Verificacion posterior:\n{_truncate(verificacion)}"
     )
 
 
-def _read_back(pending, data) -> str:
-    """Relee el registro afectado para confirmar el estado resultante."""
+def _read_back(pending, data):
+    """Relee el registro afectado para confirmar el estado resultante.
+
+    Devuelve una tupla (rid_efectivo, resultado):
+      - rid_efectivo: para POST, el id creado leido de la respuesta
+        (Codigo/Id/id) o el resource_id original; en el resto, el resource_id.
+      - resultado: para DELETE, un string de confirmacion/AVISO; para POST/PUT,
+        el objeto CRUDO parseado que devolvio el GET (sin truncar). Ante un fallo,
+        un string corto de mensaje. Nunca lanza excepciones.
+    """
+    rid = pending.resource_id
+    if pending.metodo == "POST" and isinstance(data, dict):
+        rid = data.get("Codigo") or data.get("Id") or data.get("id") or rid
     try:
-        rid = pending.resource_id
-        if pending.metodo == "POST" and isinstance(data, dict):
-            rid = data.get("Codigo") or data.get("Id") or data.get("id") or rid
         if not rid:
-            return "(no se pudo identificar el registro para releer)"
+            return (rid, "(no se pudo identificar el registro para releer)")
         if pending.metodo == "DELETE":
             try:
                 get_client().request("GET", pending.api_id, id=rid)
-                return f"AVISO: el registro {rid} todavia responde a GET tras el DELETE."
+                return (rid, f"AVISO: el registro {rid} todavia responde a GET tras el DELETE.")
             except FinnegansError:
-                return f"Confirmado: el registro {rid} ya no existe (DELETE OK)."
+                return (rid, f"Confirmado: el registro {rid} ya no existe (DELETE OK).")
         leido = get_client().request("GET", pending.api_id, id=rid)
-        return _truncate(leido, 800)
+        return (rid, leido)
     except FinnegansError as e:
-        return f"(no se pudo releer: {e})"
+        return (rid, f"(no se pudo releer: {e})")
 
 
 if __name__ == "__main__":

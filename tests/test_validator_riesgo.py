@@ -19,6 +19,12 @@ class TestEvaluarRiesgo(unittest.TestCase):
         self.assertTrue(alto)
         self.assertIn("sin id", motivo.lower())
 
+    def test_patch_sin_id_es_alto_riesgo(self):
+        bloq, alto, motivo = evaluar_riesgo("PATCH", None, "cliente", False, [])
+        self.assertFalse(bloq)
+        self.assertTrue(alto)
+        self.assertIn("sin id", motivo.lower())
+
     def test_patron_alto_riesgo(self):
         bloq, alto, motivo = evaluar_riesgo("POST", None, "asientoContable", False, ["asiento"])
         self.assertTrue(alto)

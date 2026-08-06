@@ -40,6 +40,15 @@ class TestValidarBody(unittest.TestCase):
         self.assertEqual(validar_body({"Codigo": "A", "Nombre": "X", "Limite": 100}, SCHEMA), [])
         self.assertEqual(validar_body({"Codigo": "A", "Nombre": "X", "Limite": 100.5}, SCHEMA), [])
 
+    def test_schema_malformado_no_crashea(self):
+        malformado = {"required": [], "properties": {"X": "not-a-dict"}}
+        # No debe lanzar excepcion aunque la propiedad no sea un dict.
+        try:
+            problemas = validar_body({"X": 1}, malformado)
+        except Exception as e:  # pragma: no cover
+            self.fail(f"validar_body lanzo excepcion con schema malformado: {e}")
+        self.assertIsInstance(problemas, list)
+
 
 if __name__ == "__main__":
     unittest.main()

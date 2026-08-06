@@ -38,6 +38,29 @@ class TestPreviewYStore(unittest.TestCase):
         with self.assertRaises(ValidationError):
             store.consume(p.confirmacion_id, "1234")  # ya consumido
 
+    def test_preview_redacta_password(self):
+        txt = construir_preview(
+            "cliente", "POST", None, {}, {"password": "SECRETO"},
+            campos_body=["password"], problemas=[],
+            alto_riesgo=False, motivo="operacion estandar", codigo="1111",
+        )
+        self.assertNotIn("SECRETO", txt)
+        self.assertIn("***", txt)
+
+    def test_tres_codigos_incorrectos_invalidan(self):
+        store = ChangeStore()
+        p = store.prepare(
+            api_id="cliente", metodo="POST", resource_id=None, parametros={},
+            body={"Codigo": "A"}, resumen="crear", codigo="1234",
+            preview="...", alto_riesgo=False,
+        )
+        for _ in range(3):
+            with self.assertRaises(ValidationError):
+                store.consume(p.confirmacion_id, "0000")  # tres codigos incorrectos
+        # el 4to intento, incluso con el codigo correcto, falla: ya no existe
+        with self.assertRaises(ValidationError):
+            store.consume(p.confirmacion_id, "1234")
+
 
 if __name__ == "__main__":
     unittest.main()

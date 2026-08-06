@@ -60,7 +60,14 @@ def main() -> int:
     cfg_path = _primary_claude_desktop_config()
     cfg = {}
     if cfg_path.exists():
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8") or "{}")
+        except json.JSONDecodeError as e:
+            print(
+                f"[ERROR] El archivo {cfg_path} tiene JSON invalido: {e}. "
+                "No se modifico para no perder datos. Corregilo o eliminalo y volve a intentar."
+            )
+            return 1
     cfg = upsert_mcp_entry(cfg, sys.executable, str(ROOT / "server.py"), str(ROOT))
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
