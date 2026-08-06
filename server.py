@@ -34,7 +34,7 @@ from finnegans import swagger_catalog
 from finnegans.config import Settings
 from finnegans.audit import AuditLog
 from finnegans.discovery import (
-    DiscoveryError, get_api, list_methods, search_apis, extraer_schema_escritura,
+    DiscoveryError, list_methods, search_apis,
 )
 from finnegans.validator import (
     READ_METHODS, ChangeStore, ValidationError, WRITE_METHODS,
@@ -208,7 +208,7 @@ def consultar_finnegans(
 
 
 @mcp.tool()
-async def preparar_cambio(
+def preparar_cambio(
     api_id: str,
     metodo: str,
     id: str | None = None,
@@ -237,16 +237,19 @@ async def preparar_cambio(
                      parametros=parametros, body=datos, resultado="bloqueado", detalle=motivo)
         return f"OPERACION BLOQUEADA: {motivo}"
 
-    # Traer schema del endpoint (degradar con aviso si falla)
+    # Traer schema del endpoint desde swaggerGlobal (degradar con aviso si falla)
     campos_body: list[str] = []
     body_schema = None
     try:
-        spec = await get_api(api_id)
-        if isinstance(spec, dict):
-            info = extraer_schema_escritura(spec, metodo)
-            campos_body = info["campos_body"]
-            body_schema = info["body_schema"]
-    except (DiscoveryError, RuntimeError):
+        settings.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(settings.swagger_url, settings.swagger_key)
+        ops = swagger_catalog.ver_endpoint(spec, api_id)
+        match = next((o for o in ops if o["metodo"] == metodo), None)
+        if match and match["tiene_body"]:
+            campos_body = match["body_campos"]
+            body_schema = {"properties": {c: {} for c in match["body_campos"]},
+                           "required": match["body_requeridos"]}
+    except (RuntimeError, swagger_catalog.SwaggerError):
         body_schema = None  # validar_body avisara "sin schema"
 
     problemas = validar_body(datos, body_schema) if metodo in ("POST", "PUT", "PATCH") else []

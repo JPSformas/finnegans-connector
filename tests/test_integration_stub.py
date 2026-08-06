@@ -1,5 +1,4 @@
 # tests/test_integration_stub.py
-import asyncio
 import json
 import tempfile
 import threading
@@ -8,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import server
+from finnegans import swagger_catalog as sc
 from finnegans.audit import AuditLog
 from finnegans.client import FinnegansClient
 from finnegans.config import Settings
@@ -61,18 +61,25 @@ class TestIntegracionStub(unittest.TestCase):
         class _S:
             allow_delete = False
             high_risk_patterns = []
+            swagger_url = "http://x/swaggerGlobal"
+            swagger_key = "k"
+
+            def require_swagger_config(self):
+                pass
         self._orig_get_settings = server.get_settings
         server.get_settings = lambda: _S()
 
-        async def fake_get_api(api_id):
-            return {"request_structure": {"paths": {"/api/cliente": {"post": {
-                "requestBodySchema": {"required": ["Nombre"],
-                                       "properties": {"Nombre": {"type": "string"}}}}}}}}
-        self._orig = server.get_api
-        server.get_api = fake_get_api
+        sc._SPEC_CACHE.clear()
+        fake_spec = {"paths": {"/cliente": {"post": {
+            "parameters": [{"name": "body", "in": "body", "required": True,
+                            "schema": {"required": ["Nombre"],
+                                       "properties": {"Nombre": {"type": "string"}}}}]}}}}
+        self._orig_fetch_spec = sc._fetch_spec
+        sc._fetch_spec = lambda url, key, timeout=60: fake_spec
 
     def tearDown(self):
-        server.get_api = self._orig
+        sc._fetch_spec = self._orig_fetch_spec
+        sc._SPEC_CACHE.clear()
         server.get_settings = self._orig_get_settings
         server._client = None
         self.httpd.shutdown()
@@ -80,7 +87,7 @@ class TestIntegracionStub(unittest.TestCase):
         self.dir.cleanup()
 
     def test_ciclo_completo_crear_cliente(self):
-        out = asyncio.run(server.preparar_cambio("cliente", "POST", datos={"Nombre": "ACME"}))
+        out = server.preparar_cambio("cliente", "POST", datos={"Nombre": "ACME"})
         cid = [l for l in out.splitlines() if l.startswith("confirmacion_id:")][0].split(":")[1].strip()
         codigo = list(server._changes._pending.values())[0].codigo
 
