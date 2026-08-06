@@ -58,6 +58,13 @@ class Settings:
         self.docs_client_id = os.environ.get("FINNEGANS_DOCS_CLIENT_ID")
         self.docs_secret_key = os.environ.get("FINNEGANS_DOCS_SECRET_KEY")
 
+        # Documentacion OpenAPI completa (swaggerGlobal de oneteam) — fuente de verdad
+        self.swagger_url = os.environ.get(
+            "FINNEGANS_SWAGGER_URL",
+            "https://oneteam.finneg.com/BSA/api/swaggerGlobal",
+        ).rstrip("/")
+        self.swagger_key = os.environ.get("FINNEGANS_SWAGGER_KEY")
+
     def require_credentials(self) -> None:
         missing = [
             name
@@ -86,4 +93,11 @@ class Settings:
             raise RuntimeError(
                 "Faltan credenciales del MCP de documentacion: " + ", ".join(missing) + ". "
                 "Obtenelas desde Finnegans / Cursor MCP config (ver .env.example)."
+            )
+
+    def require_swagger_config(self) -> None:
+        if not self.swagger_key:
+            raise RuntimeError(
+                "Falta FINNEGANS_SWAGGER_KEY en el .env. Es la clave de lectura de "
+                "la documentacion OpenAPI de Finnegans (swaggerGlobal). Ver .env.example."
             )
