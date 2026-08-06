@@ -6,6 +6,43 @@ from unittest import mock
 from finnegans import swagger_catalog as sc
 
 
+SPEC = {
+    "swagger": "2.0",
+    "basePath": "/api",
+    "definitions": {
+        "ClienteBody": {
+            "type": "object",
+            "required": ["Codigo", "Nombre"],
+            "properties": {
+                "Codigo": {"type": "string"},
+                "Nombre": {"type": "string"},
+                "Limite": {"type": "number"},
+            },
+        }
+    },
+    "paths": {
+        "/cliente/list": {"get": {"tags": ["cliente"], "summary": "Listar cliente",
+            "operationId": "cliente_list",
+            "parameters": [{"name": "ACCESS_TOKEN", "in": "query", "required": True}]}},
+        "/cliente/{codigo}": {"get": {"tags": ["cliente"], "summary": "Obtener cliente por ID",
+            "operationId": "cliente_get",
+            "parameters": [{"name": "codigo", "in": "path", "required": True},
+                           {"name": "ACCESS_TOKEN", "in": "query", "required": True}]}},
+        "/cliente": {"post": {"tags": ["cliente"], "summary": "Crear cliente",
+            "operationId": "cliente_post",
+            "parameters": [{"name": "ACCESS_TOKEN", "in": "query", "required": True},
+                           {"name": "body", "in": "body", "required": True,
+                            "schema": {"$ref": "#/definitions/ClienteBody"}}]}},
+        "/reports/analisisFacturaVenta": {"get": {"tags": ["reports", "VENTAS"],
+            "summary": "Analisis de facturas de venta",
+            "operationId": "reports_analisisFacturaVenta",
+            "parameters": [{"name": "ACCESS_TOKEN", "in": "query", "required": True},
+                           {"name": "FechaDesde", "in": "query", "required": False,
+                            "description": "Filtrar por fecha desde"}]}},
+    },
+}
+
+
 class TestFetchSpec(unittest.TestCase):
     def test_arma_url_con_key_y_parsea_json(self):
         """Verifica que _fetch_spec construye la URL con key URL-encoded y parsea JSON."""
@@ -68,6 +105,22 @@ class TestCargarSpec(unittest.TestCase):
         sc._fetch_spec = boom  # type: ignore
         with self.assertRaises(sc.SwaggerError):
             sc.cargar_spec("http://x/swaggerGlobal", "k", force=True)
+
+
+class TestBuscarEndpoints(unittest.TestCase):
+    def test_encuentra_cliente_y_rankea(self):
+        r = sc.buscar_endpoints(SPEC, "cliente")
+        paths = [x["path"] for x in r]
+        self.assertIn("/cliente/list", paths)
+        self.assertIn("/cliente/{codigo}", paths)
+        self.assertTrue(all(x["score"] > 0 for x in r))
+
+    def test_encuentra_reporte_por_venta(self):
+        r = sc.buscar_endpoints(SPEC, "factura de venta")
+        self.assertIn("/reports/analisisFacturaVenta", [x["path"] for x in r])
+
+    def test_sin_coincidencias_devuelve_vacio(self):
+        self.assertEqual(sc.buscar_endpoints(SPEC, "zzz-inexistente"), [])
 
 
 if __name__ == "__main__":
