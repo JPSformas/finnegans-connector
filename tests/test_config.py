@@ -19,6 +19,20 @@ class TestSettingsNuevo(unittest.TestCase):
         self.assertEqual(s.high_risk_patterns, [])
         self.assertTrue(s.audit_log_path)  # tiene default
 
+    def test_audit_log_vacio_cae_al_default_absoluto(self):
+        # Un .env con "FINNEGANS_AUDIT_LOG=" define la variable en vacio; sin
+        # este fallback el path queda "" -> Path(".") y el log intenta escribir
+        # sobre un directorio (PermissionError en Windows).
+        from pathlib import Path
+        s = self._settings({"FINNEGANS_AUDIT_LOG": ""})
+        self.assertTrue(s.audit_log_path)
+        self.assertTrue(Path(s.audit_log_path).is_absolute())
+        self.assertTrue(s.audit_log_path.endswith("finnegans-audit.jsonl"))
+
+    def test_url_vacia_cae_al_default(self):
+        s = self._settings({"FINNEGANS_BASE_URL": ""})
+        self.assertEqual(s.base_url, "https://api.finneg.com")
+
     def test_allow_delete_truthy(self):
         s = self._settings({"FINNEGANS_ALLOW_DELETE": "true"})
         self.assertTrue(s.allow_delete)
