@@ -18,6 +18,14 @@ class SwaggerError(Exception):
 
 _SPEC_CACHE: dict[str, dict] = {}
 
+# Los schemas de body de Finnegans no viven en "#/definitions/...": cada uno
+# esta en otro endpoint del swagger. Se cachean aparte del spec principal.
+_VO_CACHE: dict[str, dict] = {}
+
+# Clave con la que guardamos, dentro del spec, la URL de donde se bajo. Hace
+# falta para resolver las refs relativas de body contra el mismo host.
+_SOURCE_URL_KEY = "x-finnegans-source-url"
+
 
 def _fetch_spec(url: str, key: str, timeout: int = 60) -> dict:
     full = f"{url}?key={urllib.parse.quote(key, safe='')}"
@@ -32,7 +40,10 @@ def cargar_spec(url: str, key: str, *, force: bool = False) -> dict:
     ck = f"{url}|{key}"
     if force or ck not in _SPEC_CACHE:
         try:
-            _SPEC_CACHE[ck] = _fetch_spec(url, key)
+            spec = _fetch_spec(url, key)
+            if isinstance(spec, dict):
+                spec[_SOURCE_URL_KEY] = url
+            _SPEC_CACHE[ck] = spec
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as e:
             raise SwaggerError(
                 "No pude cargar la documentacion de APIs de Finnegans (swaggerGlobal). "
@@ -81,12 +92,69 @@ def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
     return resultados[:limite]
 
 
+def _es_ref_externa(ref: str) -> bool:
+    """True si la ref apunta afuera del documento (URL absoluta o relativa)."""
+    return ref.startswith(("http://", "https://", "/"))
+
+
+def _url_de_ref(ref: str, source_url: str) -> str:
+    """Convierte una ref relativa en absoluta usando el host del spec."""
+    if ref.startswith(("http://", "https://")):
+        return ref
+    partes = urllib.parse.urlsplit(source_url)
+    return urllib.parse.urlunsplit((partes.scheme, partes.netloc, "", "", "")) + ref
+
+
+def _bajar_schema_externo(url: str, timeout: int = 30) -> dict:
+    """Baja y cachea un schema de body que vive en otro endpoint del swagger.
+
+    La ref ya trae su propia key en el query string, asi que no hay que
+    inyectar credenciales.
+    """
+    if url in _VO_CACHE:
+        return _VO_CACHE[url]
+    req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    data = json.loads(raw)
+    _VO_CACHE[url] = data if isinstance(data, dict) else {}
+    return _VO_CACHE[url]
+
+
+def _resolver_body_schema(spec: dict, schema: dict) -> tuple[dict, bool]:
+    """Resuelve el schema de un parametro body.
+
+    Devuelve (schema, resuelto). Si no se pudo resolver, resuelto es False y
+    el llamador debe tratarlo como "sin schema" en vez de asumir que el
+    endpoint no tiene campos: de lo contrario todo campo enviado aparece como
+    desconocido.
+    """
+    if not isinstance(schema, dict):
+        return {}, False
+    if "$ref" not in schema:
+        return schema, bool(schema)
+
+    ref = schema["$ref"]
+    if _es_ref_externa(ref):
+        source = spec.get(_SOURCE_URL_KEY) or ""
+        if not source and not ref.startswith(("http://", "https://")):
+            return {}, False
+        try:
+            resuelto = _bajar_schema_externo(_url_de_ref(ref, source))
+        except (urllib.error.URLError, TimeoutError, OSError,
+                ValueError, json.JSONDecodeError):
+            return {}, False
+        return resuelto, bool(resuelto.get("properties"))
+
+    nombre = ref.split("/")[-1]  # ej. "#/definitions/ClienteBody"
+    interno = (spec.get("definitions") or {}).get(nombre, {})
+    return interno, bool(interno)
+
+
 def resolver_ref(spec: dict, schema: dict) -> dict:
-    if isinstance(schema, dict) and "$ref" in schema:
-        ref = schema["$ref"]  # ej. "#/definitions/ClienteBody"
-        nombre = ref.split("/")[-1]
-        return (spec.get("definitions") or {}).get(nombre, {})
-    return schema or {}
+    """Resuelve un $ref interno o externo; devuelve {} si no se pudo."""
+    resuelto, _ = _resolver_body_schema(spec, schema)
+    return resuelto
 
 
 def _primer_segmento(path: str) -> str:
@@ -106,14 +174,17 @@ def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
             if m.lower() not in _METODOS_HTTP or not isinstance(detail, dict):
                 continue
             params, tiene_body, campos, requeridos = [], False, [], []
+            body_schema: dict | None = None
+            body_ok = False
             for p in detail.get("parameters") or []:
                 if not isinstance(p, dict):
                     continue
                 if p.get("in") == "body":
                     tiene_body = True
-                    body_schema = resolver_ref(spec, p.get("schema") or {})
-                    campos = list((body_schema.get("properties") or {}).keys())
-                    requeridos = list(body_schema.get("required") or [])
+                    resuelto, body_ok = _resolver_body_schema(spec, p.get("schema") or {})
+                    body_schema = resuelto if body_ok else None
+                    campos = list((resuelto.get("properties") or {}).keys())
+                    requeridos = list(resuelto.get("required") or [])
                 elif p.get("name") != "ACCESS_TOKEN":
                     params.append({
                         "nombre": p.get("name"),
@@ -129,5 +200,7 @@ def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
                 "tiene_body": tiene_body,
                 "body_campos": campos,
                 "body_requeridos": requeridos,
+                "body_schema_ok": body_ok,
+                "body_schema": body_schema,
             })
     return ops

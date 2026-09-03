@@ -166,8 +166,12 @@ def ver_api(api_id: str) -> str:
                            for p in o["parametros"])
             lineas.append(f"    Parametros: {ps}")
         if o["tiene_body"]:
-            req = ", ".join(o["body_requeridos"]) or "(sin requeridos)"
-            lineas.append(f"    Body: campos {o['body_campos']} | requeridos: {req}")
+            if o["body_schema_ok"]:
+                req = ", ".join(o["body_requeridos"]) or "(sin requeridos)"
+                lineas.append(f"    Body: campos {o['body_campos']} | requeridos: {req}")
+            else:
+                lineas.append("    Body: requerido, pero no se pudo leer su schema "
+                              "de la documentacion.")
     lineas.append("\nPara leer: consultar_finnegans. Para escribir: preparar_cambio.")
     return "\n".join(lineas)
 
@@ -247,8 +251,10 @@ def preparar_cambio(
         match = next((o for o in ops if o["metodo"] == metodo), None)
         if match and match["tiene_body"]:
             campos_body = match["body_campos"]
-            body_schema = {"properties": {c: {} for c in match["body_campos"]},
-                           "required": match["body_requeridos"]}
+            # Si el schema no se resolvio, body_schema queda None para que
+            # validar_body diga "sin schema" en vez de marcar TODOS los campos
+            # como desconocidos.
+            body_schema = match["body_schema"]
     except (RuntimeError, swagger_catalog.SwaggerError):
         body_schema = None  # validar_body avisara "sin schema"
 

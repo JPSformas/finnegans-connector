@@ -53,13 +53,21 @@ entidades con `PUT /api/{entidad}/{codigo}`.
   hay que hacerlo por la interfaz de Finnegans, que permite guardar cosas que
   la API no acepta.
 
-### Las advertencias "campo desconocido" hoy son ruido
+### Las advertencias del preview son confiables
 
-Mientras el validador no resuelva el schema del body (vive en otro endpoint del
-swagger), **todos** los campos salen marcados como desconocidos: un PUT de
-cliente produce 57 advertencias falsas. No las leas como error ni alarmes al
-usuario con ellas. Lo que si importa es el **diff contra el registro actual**:
-mostrale que campos cambian y de que valor a que valor.
+El validador resuelve el schema real del body, asi que sus advertencias hay que
+leerlas en serio:
+
+- "Falta el campo requerido X" en un PUT casi siempre significa que armaste un
+  body parcial. Volve al procedimiento leer-modificar-escribir.
+- "Campo desconocido X" significa que el campo no existe en la entidad, en
+  general por un error de tipeo o de nombre.
+- Si el preview dice "(sin schema: no se pudo verificar contra la
+  documentacion)", el validador no pudo leer el schema. Ahi no hay red de
+  seguridad: avisale al usuario antes de que confirme.
+
+Ademas de las advertencias, mostrale siempre el **diff contra el registro
+actual**: que campos cambian y de que valor a que valor.
 
 ## Reglas de seguridad
 
@@ -67,10 +75,9 @@ mostrale que campos cambian y de que valor a que valor.
 - NUNCA pidas ni guardes contraseñas personales.
 - Si no encontras la API, decilo claramente y sugeri reformular la pregunta.
 - Si un codigo/id no existe (error 404), explicá que el registro no se encontro.
-- Si el preview muestra advertencias ⚠️, filtralas antes de alarmar: hoy
-  "campo desconocido" es ruido del validador (ver la seccion de escrituras).
-  Lo que si tenes que mostrar ANTES de que confirme es el diff contra el
-  registro actual.
+- Si el preview muestra advertencias ⚠️, avisale al usuario ANTES de que
+  confirme: son confiables (ver la seccion de escrituras). Mostrale tambien
+  el diff contra el registro actual.
 - Las operaciones marcadas ALTO RIESGO requieren atencion extra: leele el motivo.
 - Los DELETE pueden estar bloqueados por politica; si es asi, explicalo.
 

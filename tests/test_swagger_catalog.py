@@ -154,3 +154,98 @@ class TestVerEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- Refs externas de body (Finnegans no usa "#/definitions/..." para los VO) ---
+
+VO_CLIENTE = {
+    "required": ["Codigo", "Nombre", "Percepciones"],
+    "properties": {
+        "Codigo": {"type": "string"},
+        "Nombre": {"type": "string"},
+        "Descripcion": {"type": "string"},
+        "Percepciones": {"type": "array"},
+    },
+}
+
+REF_EXTERNA = "/BSA/api/swaggerApi?key=abc123&api=cliente&nombreVO=ClienteVO"
+
+SPEC_REF_EXTERNA = {
+    "swagger": "2.0",
+    sc._SOURCE_URL_KEY: "https://oneteam.finneg.com/BSA/api/swaggerGlobal",
+    "paths": {
+        "/cliente/{codigo}": {
+            "put": {
+                "tags": ["cliente"], "summary": "cliente",
+                "parameters": [
+                    {"name": "ACCESS_TOKEN", "in": "query", "required": True},
+                    {"name": "ClienteVO", "in": "body", "required": True,
+                     "schema": {"$ref": REF_EXTERNA}},
+                ],
+            }
+        }
+    },
+}
+
+
+def _fake_urlopen(payload):
+    """Devuelve un urlopen falso que responde payload como JSON."""
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+    return mock.Mock(return_value=FakeResponse(json.dumps(payload).encode("utf-8")))
+
+
+class TestRefExterna(unittest.TestCase):
+    def setUp(self):
+        sc._VO_CACHE.clear()
+
+    def test_resolver_ref_baja_el_schema_del_host_del_spec(self):
+        with mock.patch("finnegans.swagger_catalog.urllib.request.urlopen",
+                        _fake_urlopen(VO_CLIENTE)) as fake:
+            schema = sc.resolver_ref(SPEC_REF_EXTERNA, {"$ref": REF_EXTERNA})
+        self.assertEqual(sorted(schema["properties"]), sorted(VO_CLIENTE["properties"]))
+        url = fake.call_args[0][0].full_url
+        self.assertEqual(url, "https://oneteam.finneg.com" + REF_EXTERNA)
+
+    def test_ver_endpoint_expone_campos_y_requeridos_del_vo(self):
+        with mock.patch("finnegans.swagger_catalog.urllib.request.urlopen",
+                        _fake_urlopen(VO_CLIENTE)):
+            ops = sc.ver_endpoint(SPEC_REF_EXTERNA, "cliente")
+        put = next(o for o in ops if o["metodo"] == "PUT")
+        self.assertTrue(put["tiene_body"])
+        self.assertTrue(put["body_schema_ok"])
+        self.assertIn("Descripcion", put["body_campos"])
+        self.assertIn("Codigo", put["body_requeridos"])
+
+    def test_cachea_el_vo_y_no_lo_baja_dos_veces(self):
+        fake = _fake_urlopen(VO_CLIENTE)
+        with mock.patch("finnegans.swagger_catalog.urllib.request.urlopen", fake):
+            sc.resolver_ref(SPEC_REF_EXTERNA, {"$ref": REF_EXTERNA})
+            sc.resolver_ref(SPEC_REF_EXTERNA, {"$ref": REF_EXTERNA})
+        self.assertEqual(fake.call_count, 1)
+
+    def test_si_falla_la_bajada_degrada_con_body_schema_ok_false(self):
+        with mock.patch("finnegans.swagger_catalog.urllib.request.urlopen",
+                        side_effect=OSError("sin red")):
+            ops = sc.ver_endpoint(SPEC_REF_EXTERNA, "cliente")
+        put = next(o for o in ops if o["metodo"] == "PUT")
+        self.assertTrue(put["tiene_body"])
+        self.assertFalse(put["body_schema_ok"])
+        self.assertEqual(put["body_campos"], [])
+
+    def test_ref_interna_sigue_funcionando(self):
+        ops = sc.ver_endpoint(SPEC, "cliente")
+        post = next(o for o in ops if o["metodo"] == "POST")
+        self.assertTrue(post["body_schema_ok"])
+        self.assertIn("Codigo", post["body_campos"])
+        self.assertIn("Nombre", post["body_requeridos"])
+
+    def test_cargar_spec_guarda_la_url_de_origen(self):
+        sc._SPEC_CACHE.clear()
+        with mock.patch("finnegans.swagger_catalog._fetch_spec", return_value={"paths": {}}):
+            spec = sc.cargar_spec("https://oneteam.finneg.com/BSA/api/swaggerGlobal", "k")
+        self.assertEqual(spec[sc._SOURCE_URL_KEY],
+                         "https://oneteam.finneg.com/BSA/api/swaggerGlobal")
