@@ -249,3 +249,93 @@ class TestRefExterna(unittest.TestCase):
             spec = sc.cargar_spec("https://oneteam.finneg.com/BSA/api/swaggerGlobal", "k")
         self.assertEqual(spec[sc._SOURCE_URL_KEY],
                          "https://oneteam.finneg.com/BSA/api/swaggerGlobal")
+
+
+# --- Tokenizacion de camelCase (Finnegans nombra sus recursos asi) ---
+
+SPEC_CAMEL = {
+    "swagger": "2.0",
+    "paths": {
+        "/movimientoFondos": {"post": {"tags": ["movimientoFondos"],
+            "summary": "movimientoFondos", "operationId": "movimientoFondos_post"}},
+        "/movimientoFondos/{codigo}": {"get": {"tags": ["movimientoFondos"],
+            "summary": "movimientoFondos", "operationId": "movimientoFondos_get"}},
+        "/rendicionFondos/list": {"get": {"tags": ["rendicionFondos"],
+            "summary": "rendicionFondos", "operationId": "rendicionFondos_list"}},
+        "/ordenPago/list": {"get": {"tags": ["ordenPago"],
+            "summary": "ordenPago", "operationId": "ordenPago_list"}},
+        "/resumenBancario": {"post": {"tags": ["resumenBancario"],
+            "summary": "resumenBancario", "operationId": "resumenBancario_post"}},
+    },
+}
+
+
+class TestTokens(unittest.TestCase):
+    def test_parte_camelcase_y_conserva_el_token_completo(self):
+        self.assertEqual(sc._tokens("movimientoFondos"),
+                         ["movimientofondos", "movimiento", "fondos"])
+
+    def test_siglas_pegadas_a_palabra(self):
+        self.assertEqual(sc._tokens("getAPIDatos"), ["getapidatos", "get", "api", "datos"])
+
+    def test_separadores_no_alfanumericos(self):
+        self.assertEqual(sc._tokens("reports/ordenPago_list"),
+                         ["reports", "ordenpago", "orden", "pago", "list"])
+
+    def test_texto_vacio(self):
+        self.assertEqual(sc._tokens(""), [])
+        self.assertEqual(sc._tokens(None), [])
+
+
+class TestBuscarCamelCase(unittest.TestCase):
+    def test_encuentra_movimiento_de_fondos(self):
+        paths = [x["path"] for x in sc.buscar_endpoints(SPEC_CAMEL, "movimiento de fondos")]
+        self.assertIn("/movimientoFondos", paths)
+        self.assertIn("/movimientoFondos/{codigo}", paths)
+
+    def test_rankea_el_recurso_exacto_antes_que_el_parcial(self):
+        r = sc.buscar_endpoints(SPEC_CAMEL, "movimiento de fondos")
+        self.assertTrue(r[0]["path"].startswith("/movimientoFondos"))
+        rendicion = next(x for x in r if x["path"] == "/rendicionFondos/list")
+        self.assertLess(rendicion["score"], r[0]["score"])
+
+    def test_busqueda_por_nombre_completo_sigue_funcionando(self):
+        paths = [x["path"] for x in sc.buscar_endpoints(SPEC_CAMEL, "movimientoFondos")]
+        self.assertIn("/movimientoFondos", paths)
+
+    def test_otros_recursos_camelcase(self):
+        for consulta, esperado in (
+            ("orden de pago", "/ordenPago/list"),
+            ("resumen bancario", "/resumenBancario"),
+            ("rendicion de fondos", "/rendicionFondos/list"),
+        ):
+            paths = [x["path"] for x in sc.buscar_endpoints(SPEC_CAMEL, consulta)]
+            self.assertIn(esperado, paths, f"consulta: {consulta}")
+
+
+class TestRankeoPrecision(unittest.TestCase):
+    """El recurso exacto va primero, no un reporte que solo lo menciona."""
+
+    SPEC_RUIDO = {
+        "swagger": "2.0",
+        "paths": {
+            "/cliente/list": {"get": {"tags": ["cliente"], "summary": "cliente",
+                "operationId": "cliente_list"}},
+            "/reports/getDatosClienteEmpresa": {"get": {"tags": ["getDatosClienteEmpresa"],
+                "summary": "getDatosClienteEmpresa",
+                "operationId": "reports_getDatosClienteEmpresa"}},
+            "/ConfigLimiteCreditoCliente/list": {"get": {"tags": ["ConfigLimiteCreditoCliente"],
+                "summary": "ConfigLimiteCreditoCliente",
+                "operationId": "ConfigLimiteCreditoCliente_list"}},
+        },
+    }
+
+    def test_recurso_exacto_primero(self):
+        r = sc.buscar_endpoints(self.SPEC_RUIDO, "cliente")
+        self.assertEqual(r[0]["path"], "/cliente/list")
+
+    def test_mas_coincidencias_gana_sobre_mas_precision(self):
+        r = sc.buscar_endpoints(SPEC_CAMEL, "movimiento fondos")
+        exacto = next(x for x in r if x["path"] == "/movimientoFondos")
+        parcial = next(x for x in r if x["path"] == "/rendicionFondos/list")
+        self.assertGreater(exacto["score"], parcial["score"])
