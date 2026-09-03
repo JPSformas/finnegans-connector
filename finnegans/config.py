@@ -72,7 +72,7 @@ class Settings:
         self.docs_secret_key = os.environ.get("FINNEGANS_DOCS_SECRET_KEY")
 
         # Documentacion OpenAPI completa (swaggerGlobal de oneteam) — fuente de verdad
-        self.swagger_url = os.environ.get(
+        self.swagger_url = _env(
             "FINNEGANS_SWAGGER_URL",
             "https://oneteam.finneg.com/BSA/api/swaggerGlobal",
         ).rstrip("/")

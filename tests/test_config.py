@@ -30,9 +30,10 @@ class TestSettingsNuevo(unittest.TestCase):
         self.assertTrue(Path(s.audit_log_path).is_absolute())
         self.assertTrue(s.audit_log_path.endswith("finnegans-audit.jsonl"))
 
-    def test_url_vacia_cae_al_default(self):
-        s = self._settings({"FINNEGANS_BASE_URL": ""})
+    def test_urls_vacias_caen_al_default(self):
+        s = self._settings({"FINNEGANS_BASE_URL": "", "FINNEGANS_SWAGGER_URL": ""})
         self.assertEqual(s.base_url, "https://api.finneg.com")
+        self.assertEqual(s.swagger_url, "https://oneteam.finneg.com/BSA/api/swaggerGlobal")
 
     def test_allow_delete_truthy(self):
         s = self._settings({"FINNEGANS_ALLOW_DELETE": "true"})
