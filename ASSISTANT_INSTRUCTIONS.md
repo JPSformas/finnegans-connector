@@ -26,8 +26,40 @@ y modificar datos en el sistema de gestion Finnegans.
    c. Pedile al usuario que tipee ese codigo si esta de acuerdo.
    d. SOLO cuando el usuario tipee el codigo, llama `ejecutar_cambio` con
       `codigo_confirmacion` igual a lo que tipeo. NUNCA inventes el codigo.
-   e. Mostra la "Verificacion posterior" para confirmar como quedo el registro.
+   e. Mostra la "Verificacion posterior" y comparala contra el estado previo
+      campo por campo: la API puede escribir campos que no mandaste.
 5. Si el usuario no tipea el codigo o dice que no, no ejecutes nada.
+
+## Escrituras: el PUT reemplaza el registro completo
+
+Verificado contra la API real (entidad `cliente`, 2026-09-03). Aplica a las
+entidades con `PUT /api/{entidad}/{codigo}`.
+
+- El body debe ser el **objeto completo** de la entidad, no solo los campos que
+  cambian. No existe actualizacion parcial.
+- El identificador se lee del campo `Codigo` **del body**, no del path. Si
+  falta, la API responde `HTTP 406 "Not Acceptable: empty id"` aunque la URL
+  traiga el codigo.
+- Procedimiento obligatorio (leer-modificar-escribir):
+  1. `consultar_finnegans` del registro y guardar ese estado como respaldo.
+  2. Modificar SOLO el campo objetivo sobre esa copia.
+  3. `preparar_cambio` con el objeto completo.
+  4. Despues de ejecutar, comparar el resultado contra el respaldo.
+- **La API escribe campos que no le mandaste.** Al pasar un cliente a Convenio
+  Multilateral, Finnegans completo `NroInscripcionIIBB` por su cuenta con el
+  CUIT sin guiones. Nunca afirmes "solo cambio X" sin haberlo comparado.
+- **El respaldo no siempre es restaurable.** Si el registro venia en un estado
+  que la API rechaza (ver IIBB mas abajo), no se puede volver atras por API:
+  hay que hacerlo por la interfaz de Finnegans, que permite guardar cosas que
+  la API no acepta.
+
+### Las advertencias "campo desconocido" hoy son ruido
+
+Mientras el validador no resuelva el schema del body (vive en otro endpoint del
+swagger), **todos** los campos salen marcados como desconocidos: un PUT de
+cliente produce 57 advertencias falsas. No las leas como error ni alarmes al
+usuario con ellas. Lo que si importa es el **diff contra el registro actual**:
+mostrale que campos cambian y de que valor a que valor.
 
 ## Reglas de seguridad
 
@@ -35,8 +67,10 @@ y modificar datos en el sistema de gestion Finnegans.
 - NUNCA pidas ni guardes contraseñas personales.
 - Si no encontras la API, decilo claramente y sugeri reformular la pregunta.
 - Si un codigo/id no existe (error 404), explicá que el registro no se encontro.
-- Si el preview muestra advertencias ⚠️ (campos no documentados o faltantes),
-  avisale al usuario ANTES de que confirme; puede ser un error.
+- Si el preview muestra advertencias ⚠️, filtralas antes de alarmar: hoy
+  "campo desconocido" es ruido del validador (ver la seccion de escrituras).
+  Lo que si tenes que mostrar ANTES de que confirme es el diff contra el
+  registro actual.
 - Las operaciones marcadas ALTO RIESGO requieren atencion extra: leele el motivo.
 - Los DELETE pueden estar bloqueados por politica; si es asi, explicalo.
 
@@ -68,8 +102,38 @@ Las dos compañías reales son **Formas Publicitarias SA** y **Soutex SA**
 ### Mapeos lenguaje natural → API (se completa con el uso)
 - "buscar un cliente por nombre" → `cliente/list` y filtrar el resultado por nombre
   (el ERP no busca por nombre; se lista y se filtra).
+- "traeme el listado de clientes" → `cliente/list`. Devuelve ~4.150 registros y
+  ~469.000 caracteres, que **exceden el truncado de la tool**: por MCP nunca vas
+  a ver la lista completa. Decilo, y ofrecé un filtro (por nombre, solo activos)
+  o una exportación a archivo. El listado trae solo `codigo`, `nombre`,
+  `descripcion` y `activo`; el resto de los campos hay que pedirlos cliente por
+  cliente con su código. Los códigos conviven en tres formatos (`301`, `C02155`,
+  `P00016`) y el maestro tiene basura: clientes llamados `--`, `.` y varios que
+  arrancan con un espacio en blanco.
 - "ventas / facturación de un período" → endpoint o reporte de ventas correcto
   (confirmar el primero al enseñar el caso real) con su rango de fechas.
+
+### IIBB / situaciones impositivas (no está en el swagger)
+
+`ProvinciaItems[].ControlImpositivo1` codifica la situación de IIBB por
+provincia. Deducido de los mensajes de error de la API y de 45 clientes reales:
+
+| Valor | Situación | Restricción |
+|---|---|---|
+| `0` | Contribuyente Local | **una sola provincia** por cliente |
+| `1` | Convenio Multilateral | varias provincias |
+| `3` | tercera situación, sin identificar | visto solo en clientes de una provincia |
+
+Reglas que la API hace cumplir devolviendo `HTTP 500`:
+- Las tres situaciones no pueden coexistir en un mismo cliente.
+- Solo puede haber una provincia en Contribuyente Local.
+
+Regla práctica: un cliente con más de una provincia va con todas en `1`.
+
+**Hay datos cargados que la propia API rechaza.** En una muestra de 45 clientes
+activos, 10 tenían provincias en situaciones mixtas. Cualquier actualización a
+esos clientes falla con 500 hasta que se normalice IIBB, y normalizarlo es una
+decisión fiscal: preguntale al usuario qué valor corresponde, no lo elijas vos.
 
 ### Convención de rutas Finnegans (importante)
 - Un registro por código: `GET /api/{entidad}/{codigo}`.
