@@ -30,10 +30,11 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from finnegans import FinnegansClient, FinnegansError
+from finnegans import swagger_catalog
 from finnegans.config import Settings
 from finnegans.audit import AuditLog
 from finnegans.discovery import (
-    DiscoveryError, get_api, list_methods, search_apis, extraer_schema_escritura,
+    DiscoveryError, search_apis,
 )
 from finnegans.validator import (
     READ_METHODS, ChangeStore, ValidationError, WRITE_METHODS,
@@ -120,75 +121,59 @@ async def verificar_conexion() -> str:
 
 
 @mcp.tool()
-async def buscar_api(consulta: str) -> str:
-    """Busca APIs de Finnegans por nombre, id o descripcion.
+def buscar_api(consulta: str) -> str:
+    """Busca APIs de Finnegans por nombre, id o descripcion (usa la doc OpenAPI oficial).
 
     Usar PRIMERO cuando el usuario pide algo y no sabes que endpoint usar.
-    Ejemplo: consulta="ordenes compra pendientes" o "saldo cliente".
     """
+    s = get_settings()
     try:
-        result = await search_apis(consulta)
-        if not isinstance(result, dict):
-            return _fmt(result)
-
-        if result.get("status") == "not_found":
-            return f"No se encontraron APIs para '{consulta}'."
-
-        candidates = result.get("results", [])
-        summary = []
-        for c in candidates[:8]:
-            summary.append(
-                f"- {c.get('id')} ({c.get('confidence', '?')}%): "
-                f"{c.get('description', c.get('title', ''))}"
-            )
-        header = f"Encontradas {result.get('count', len(candidates))} APIs para '{consulta}':\n"
-        return header + "\n".join(summary) + "\n\nUsa ver_api con el 'id' elegido."
-    except (DiscoveryError, RuntimeError) as e:
-        return f"Error buscando APIs: {e}"
+        s.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(s.swagger_url, s.swagger_key)
+    except (RuntimeError, swagger_catalog.SwaggerError) as e:
+        return f"No pude acceder a la documentacion de APIs: {e}"
+    resultados = swagger_catalog.buscar_endpoints(spec, consulta)
+    if not resultados:
+        return f"No se encontraron endpoints para '{consulta}'."
+    lineas = [f"Encontrados {len(resultados)} endpoints para '{consulta}':"]
+    for r in resultados:
+        lineas.append(f"- {r['path']}  ({', '.join(r['metodos'])})  {r['resumen']}")
+    lineas.append("\nUsa ver_api con el 'path' o el nombre del recurso (ej. 'cliente').")
+    return "\n".join(lineas)
 
 
 @mcp.tool()
-async def ver_api(api_id: str) -> str:
-    """Obtiene la especificacion de una API: metodos, parametros y body.
+def ver_api(api_id: str) -> str:
+    """Muestra las operaciones reales de un recurso: metodos, paths y parametros.
 
-    Llamar DESPUES de buscar_api para saber como invocar el endpoint.
+    api_id puede ser un recurso ('cliente') o un path exacto ('reports/analisisFacturaVenta').
     """
+    s = get_settings()
     try:
-        result = await get_api(api_id)
-        if not isinstance(result, dict):
-            return _fmt(result)
-
-        if result.get("status") == "not_found":
-            return f"API '{api_id}' no encontrada."
-
-        if result.get("status") == "ambiguous":
-            candidates = result.get("candidates", [])
-            lines = [f"API '{api_id}' es ambigua. Candidatos:"]
-            for c in candidates[:5]:
-                lines.append(f"  - {c.get('id')}: {c.get('description', '')}")
-            return "\n".join(lines)
-
-        methods = list_methods(result)
-        if not methods:
-            return (
-                f"API '{api_id}' encontrada pero sin metodos documentados. "
-                "Proba consultar_finnegans con GET y el id del recurso."
-            )
-
-        lines = [f"API: {api_id}\nMetodos disponibles:\n"]
-        for m in methods:
-            lines.append(f"  {m['metodo']} {m['path']} — {m['resumen']}")
-            if m["parametros"]:
-                params = ", ".join(
-                    f"{p['nombre']}{'*' if p['requerido'] else ''}" for p in m["parametros"]
-                )
-                lines.append(f"    Parametros: {params}")
-            if m["tiene_body"]:
-                lines.append("    Requiere body JSON (ver schema en ver_api completo)")
-        lines.append("\nPara leer: consultar_finnegans. Para escribir: preparar_cambio.")
-        return "\n".join(lines)
-    except (DiscoveryError, RuntimeError) as e:
-        return f"Error obteniendo API: {e}"
+        s.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(s.swagger_url, s.swagger_key)
+    except (RuntimeError, swagger_catalog.SwaggerError) as e:
+        return f"No pude acceder a la documentacion de APIs: {e}"
+    ops = swagger_catalog.ver_endpoint(spec, api_id)
+    if not ops:
+        return (f"No encontre operaciones para '{api_id}'. "
+                "Proba buscar_api para ver el nombre exacto del recurso.")
+    lineas = [f"Operaciones de '{api_id}':\n"]
+    for o in ops:
+        lineas.append(f"  {o['metodo']} /api{o['path']} — {o['resumen']}")
+        if o["parametros"]:
+            ps = ", ".join(f"{p['nombre']}{'*' if p['requerido'] else ''} ({p['ubicacion']})"
+                           for p in o["parametros"])
+            lineas.append(f"    Parametros: {ps}")
+        if o["tiene_body"]:
+            if o["body_schema_ok"]:
+                req = ", ".join(o["body_requeridos"]) or "(sin requeridos)"
+                lineas.append(f"    Body: campos {o['body_campos']} | requeridos: {req}")
+            else:
+                lineas.append("    Body: requerido, pero no se pudo leer su schema "
+                              "de la documentacion.")
+    lineas.append("\nPara leer: consultar_finnegans. Para escribir: preparar_cambio.")
+    return "\n".join(lineas)
 
 
 @mcp.tool()
@@ -200,11 +185,11 @@ def consultar_finnegans(
 ) -> str:
     """Consulta de LECTURA a Finnegans (solo GET).
 
-    Args:
-        api_id: id de la API (ej. "producto", "ACOrdenesCompraPendientes").
-        metodo: debe ser GET (lectura).
-        id: codigo del registro en el path (si la API lo requiere).
-        parametros: filtros adicionales como query params (ej. FechaDesde).
+    api_id puede ser:
+      - un recurso con codigo:  api_id='cliente', id='P01093'  -> /api/cliente/P01093
+      - un listado:             api_id='cliente/list'          -> /api/cliente/list
+      - un reporte:             api_id='reports/analisisFacturaVenta'
+    parametros: filtros adicionales como query params (ej. FechaDesde).
     """
     metodo = metodo.upper()
     if metodo not in READ_METHODS:
@@ -216,11 +201,18 @@ def consultar_finnegans(
         data = get_client().request(metodo, api_id, id=id, params=parametros)
         return _truncate(data)
     except FinnegansError as e:
-        return f"Error en consulta: {e}"
+        msg = str(e)
+        if "id missing" in msg.lower():
+            return (
+                f"El endpoint '{api_id}' requiere un codigo en el path "
+                f"(ej. '{api_id}/CODIGO'), o usa la operacion de listado "
+                f"'{api_id}/list'."
+            )
+        return f"Error en consulta: {msg}"
 
 
 @mcp.tool()
-async def preparar_cambio(
+def preparar_cambio(
     api_id: str,
     metodo: str,
     id: str | None = None,
@@ -249,16 +241,21 @@ async def preparar_cambio(
                      parametros=parametros, body=datos, resultado="bloqueado", detalle=motivo)
         return f"OPERACION BLOQUEADA: {motivo}"
 
-    # Traer schema del endpoint (degradar con aviso si falla)
+    # Traer schema del endpoint desde swaggerGlobal (degradar con aviso si falla)
     campos_body: list[str] = []
     body_schema = None
     try:
-        spec = await get_api(api_id)
-        if isinstance(spec, dict):
-            info = extraer_schema_escritura(spec, metodo)
-            campos_body = info["campos_body"]
-            body_schema = info["body_schema"]
-    except (DiscoveryError, RuntimeError):
+        settings.require_swagger_config()
+        spec = swagger_catalog.cargar_spec(settings.swagger_url, settings.swagger_key)
+        ops = swagger_catalog.ver_endpoint(spec, api_id)
+        match = next((o for o in ops if o["metodo"] == metodo), None)
+        if match and match["tiene_body"]:
+            campos_body = match["body_campos"]
+            # Si el schema no se resolvio, body_schema queda None para que
+            # validar_body diga "sin schema" en vez de marcar TODOS los campos
+            # como desconocidos.
+            body_schema = match["body_schema"]
+    except (RuntimeError, swagger_catalog.SwaggerError):
         body_schema = None  # validar_body avisara "sin schema"
 
     problemas = validar_body(datos, body_schema) if metodo in ("POST", "PUT", "PATCH") else []

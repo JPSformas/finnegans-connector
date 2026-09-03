@@ -8,6 +8,9 @@ service-credentials.env
 # Auditoria (logs locales, no versionar)
 audit/
 
+# Exports de datos reales (maestros de clientes, CUITs). NUNCA versionar.
+exports/
+
 # Python
 __pycache__/
 *.py[cod]

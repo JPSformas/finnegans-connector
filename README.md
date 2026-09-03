@@ -643,8 +643,11 @@ Una vez que los 4 pasos pasen, entregá la PC con:
 
 ### `Bad Request: id missing` al consultar
 
-- Esa API requiere un **código** en el path. Primero `buscar_api` + `ver_api` para ver parámetros.
-- En `consultar_finnegans`, pasá el parámetro `id` con el código del maestro.
+- El router de Finnegans exige un segmento tras la entidad. Rutas válidas:
+  - `GET /api/{entidad}/{codigo}` → un registro.
+  - `GET /api/{entidad}/list` → listado completo.
+  - `GET /api/reports/{Nombre}` → reportes.
+- Si querés listar, usá `api_id='{entidad}/list'`. Si querés un registro, pasá `id`.
 
 
 
@@ -682,6 +685,9 @@ python verify_setup.py
 
 ## Herramientas MCP expuestas
 
+> **Fuente de verdad de APIs:** el conector resuelve endpoints contra el spec
+> OpenAPI completo de Finnegans (`FINNEGANS_SWAGGER_URL` + `FINNEGANS_SWAGGER_KEY`,
+> el Swagger de oneteam). El MCP `finnegans-api-docs` queda como apoyo secundario.
 
 | Tool                  | Propósito                                | Cuándo usarla                  |
 | --------------------- | ---------------------------------------- | ------------------------------ |
@@ -704,7 +710,8 @@ python verify_setup.py
 - `ejecutar_cambio` rechaza si `usuario_confirmo` no es `true`.
 - Confirmaciones expiran a los 10 minutos.
 - No se usan contraseñas personales; solo credenciales de aplicación.
-- Rotar `client_secret` y keys de docs si se expusieron en un chat o mail.
+- Si el `client_secret` o el `FINNEGANS_SWAGGER_KEY` se exponen (chat, mail),
+  rotarlos en Finnegans y actualizar el `.env`.
 
 ---
 
