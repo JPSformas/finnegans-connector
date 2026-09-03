@@ -55,8 +55,29 @@ def cargar_spec(url: str, key: str, *, force: bool = False) -> dict:
 _METODOS_HTTP = {"get", "post", "put", "delete", "patch"}
 
 
+# Limite de palabra dentro de un identificador camelCase: "ordenPago" -> orden|Pago,
+# "getAPIDatos" -> get|API|Datos (la sigla no se parte letra por letra).
+_LIMITE_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
 def _tokens(texto: str) -> list[str]:
-    return [t for t in re.split(r"[^a-z0-9]+", (texto or "").lower()) if t]
+    """Parte el texto en palabras buscables.
+
+    Ademas de separar por caracteres no alfanumericos, parte los limites de
+    camelCase: Finnegans nombra sus recursos asi ("movimientoFondos",
+    "ordenPago"), y sin esto una consulta como "movimiento de fondos" no
+    matchea ningun endpoint. Se conserva tambien el identificador completo
+    para que buscar "movimientoFondos" siga funcionando.
+    """
+    salida: list[str] = []
+    for crudo in re.split(r"[^A-Za-z0-9]+", texto or ""):
+        if not crudo:
+            continue
+        salida.append(crudo.lower())
+        partes = [p.lower() for p in _LIMITE_CAMEL.split(crudo) if p]
+        if len(partes) > 1:
+            salida.extend(partes)
+    return salida
 
 
 def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
@@ -79,14 +100,19 @@ def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
             continue
         texto = " ".join([path] + tags + resumenes + opids)
         palabras = set(_tokens(texto))
-        score = len(q & palabras)
-        if score:
+        coincidencias = len(q & palabras)
+        if coincidencias:
+            # Al termino base (cuantas palabras de la consulta aparecen) se le
+            # suma la precision: que proporcion del endpoint explica la
+            # consulta. Sin esto "cliente" empata en 1 con /cliente/list y con
+            # /reports/getDatosClienteEmpresa, y el recurso exacto se pierde.
+            precision = coincidencias / len(palabras)
             resultados.append({
                 "path": path,
                 "metodos": metodos,
                 "tags": sorted(set(tags)),
                 "resumen": next((r for r in resumenes if r), ""),
-                "score": float(score),
+                "score": float(coincidencias) + precision,
             })
     resultados.sort(key=lambda x: x["score"], reverse=True)
     return resultados[:limite]
