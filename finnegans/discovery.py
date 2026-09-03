@@ -57,9 +57,18 @@ async def search_apis(query: str) -> dict[str, Any]:
     return await _call_docs_tool("search_apis", {"query": query})
 
 
+# No se invalida a proposito: el proceso MCP se reinicia al actualizar (modelo de despliegue).
+_api_cache: dict[str, Any] = {}
+
+
 async def get_api(api_id: str) -> dict[str, Any]:
-    """Obtiene la especificacion OpenAPI de una API."""
-    return await _call_docs_tool("get_api", {"api": api_id})
+    """Obtiene la especificacion OpenAPI de una API (con cache en memoria)."""
+    if api_id in _api_cache:
+        return _api_cache[api_id]
+    result = await _call_docs_tool("get_api", {"api": api_id})
+    if isinstance(result, dict) and result.get("status") not in ("not_found", "ambiguous"):
+        _api_cache[api_id] = result
+    return result
 
 
 def list_methods(api_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -97,3 +106,41 @@ def list_methods(api_spec: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
     return methods
+
+
+def extraer_schema_escritura(api_spec: dict[str, Any], metodo: str) -> dict[str, Any]:
+    """Devuelve parametros, body_schema y campos del body para un metodo dado.
+
+    Funcion pura (no consulta la red): opera sobre un spec ya obtenido.
+    """
+    metodo = metodo.upper()
+    vacio = {"parametros": [], "body_schema": None, "campos_body": [], "requeridos": []}
+    structure = api_spec.get("request_structure") or api_spec.get("api") or {}
+    paths = structure.get("paths") or {}
+
+    for _path, ops in paths.items():
+        if not isinstance(ops, dict):
+            continue
+        for http_method, detail in ops.items():
+            if http_method.upper() != metodo or not isinstance(detail, dict):
+                continue
+            params = [
+                {
+                    "nombre": p.get("name"),
+                    "requerido": p.get("required", False),
+                    "ubicacion": p.get("in"),
+                    "descripcion": p.get("description", ""),
+                }
+                for p in (detail.get("parameters") or [])
+                if isinstance(p, dict) and p.get("name") != "ACCESS_TOKEN"
+            ]
+            body_schema = detail.get("requestBodySchema")
+            campos = list((body_schema or {}).get("properties", {}).keys())
+            requeridos = list((body_schema or {}).get("required", []))
+            return {
+                "parametros": params,
+                "body_schema": body_schema,
+                "campos_body": campos,
+                "requeridos": requeridos,
+            }
+    return vacio

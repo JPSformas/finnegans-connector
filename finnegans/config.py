@@ -28,19 +28,43 @@ def load_dotenv(path: str | os.PathLike | None = None) -> None:
         os.environ.setdefault(key, value)
 
 
+def _env(name: str, default: str = "") -> str:
+    """Lee una variable de entorno tratando el vacio como no definida.
+
+    Un .env con "CLAVE=" define la variable con valor vacio, asi que
+    os.environ.get(name, default) devuelve "" y el default documentado
+    nunca se aplica.
+    """
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
+
+
 class Settings:
     """Configuracion del conector."""
 
     def __init__(self, load_env: bool = True) -> None:
         if load_env:
             load_dotenv()
-        self.base_url = os.environ.get("FINNEGANS_BASE_URL", "https://api.finneg.com").rstrip("/")
+        self.base_url = _env("FINNEGANS_BASE_URL", "https://api.finneg.com").rstrip("/")
         self.client_id = os.environ.get("FINNEGANS_CLIENT_ID")
         self.client_secret = os.environ.get("FINNEGANS_CLIENT_SECRET")
         self.workspace = os.environ.get("FINNEGANS_WORKSPACE")
 
+        from pathlib import Path as _Path
+
+        self.operator = os.environ.get("FINNEGANS_OPERATOR", "")
+        default_audit = _Path(__file__).resolve().parent.parent / "audit" / "finnegans-audit.jsonl"
+        self.audit_log_path = _env("FINNEGANS_AUDIT_LOG", str(default_audit))
+        self.allow_delete = os.environ.get("FINNEGANS_ALLOW_DELETE", "").strip().lower() in (
+            "1", "true", "si", "sí", "yes",
+        )
+        raw_patterns = os.environ.get("FINNEGANS_HIGH_RISK_PATTERNS", "")
+        self.high_risk_patterns = [p.strip() for p in raw_patterns.split(",") if p.strip()]
+
         # MCP de documentacion (catalogo de APIs Finnegans)
-        self.docs_mcp_url = os.environ.get(
+        self.docs_mcp_url = _env(
             "FINNEGANS_DOCS_MCP_URL",
             "https://services.finneg.com/api/1/finnegans-developer-mcp/finnegans-api-docs/mcp",
         )

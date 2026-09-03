@@ -427,19 +427,155 @@ Si la CLI funciona pero Claude no, el problema está en `claude_desktop_config.j
 
 
 
-### Paso 10 — Entrega al líder
+## Entrega a usuarios
 
-Entregá la PC con:
+**GATE OBLIGATORIO: Los 4 pasos siguientes son el criterio de aceptación por PC.**
+
+Antes de entregar la PC a un usuario (líder), un operador IT debe ejecutar **en orden** los 4 pasos de validación que figuran abajo. Solo cuando los 4 pasos pasen, la PC está lista.
+
+---
+
+### Paso 1: Configurar `.env` con credenciales de servicio acotadas
+
+**Objetivo:** verificar que las credenciales en `.env` son de un **usuario API con rol acotado** (NO administrador).
+
+- [ ] En Finnegans, obtener un usuario de servicio con **rol limitado** (ej. "Solo lectura + escritura de tablas permitidas").
+- [ ] Copiar su `client_id` y `client_secret`.
+- [ ] Verificar en el archivo `.env` que está completado:
+  ```env
+  FINNEGANS_CLIENT_ID=<id del usuario acotado>
+  FINNEGANS_CLIENT_SECRET=<secret del usuario acotado>
+  FINNEGANS_OPERATOR=<nombre de usuario de prueba para auditoría>
+  ```
+- [ ] **Validar que NO están credenciales de administrador.**
+- [ ] Confirmar que `.env` está en `.gitignore` (no subido a git).
+
+**Criterio de aceptación:** `.env` cargado con usuario acotado y `FINNEGANS_OPERATOR` definido.
+
+---
+
+### Paso 2: Correr `python verify_setup.py` y confirmar checks 4, 5 y 6
+
+**Objetivo:** validar que Python, credenciales, catálogo de APIs y servidor MCP funcionan.
+
+- [ ] Abrir PowerShell en la carpeta del proyecto (ej. `C:\FinnegansAgent`).
+- [ ] Ejecutar:
+  ```powershell
+  python verify_setup.py
+  ```
+- [ ] Esperar a que finalice. **Todos los checks deben estar `[OK]`**, especialmente:
+  - **Check 4:** Autenticación y token (credenciales API válidas)
+  - **Check 5:** Búsqueda en catálogo de APIs (conectividad a Finnegans)
+  - **Check 6:** Servidor MCP registrado y funcionando
+- [ ] Si hay un `[ERROR]`, **detente aquí**:
+  1. Lee el mensaje de error.
+  2. Corrige el punto indicado (ej. actualizar `.env`, reiniciar, verificar conectividad).
+  3. Vuelve a ejecutar `python verify_setup.py`.
+  4. Repite hasta que todos los checks pasen.
+
+**Criterio de aceptación:** Script finaliza con `RESULTADO: TODO OK (6/6 checks automáticos)`.
+
+---
+
+### Paso 3: Lectura real en Claude Desktop
+
+**Objetivo:** verificar que el agente conecta a Finnegans y trae datos reales en modo lectura.
+
+- [ ] **Cerrar Claude Desktop por completo** (incluido el ícono en la bandeja del sistema).
+- [ ] **Volver a abrir Claude Desktop.**
+- [ ] Entrar al **Proyecto "Finnegans"** (o el nombre que configuraste en el Paso 7).
+- [ ] Escribir en la conversación un mensaje de **lectura de solo lectura**, ejemplo:
+  ```
+  Buscá la API de productos. Mostrá cómo se consulta. Ahora trae los datos del producto con código "PROD123".
+  ```
+  (Reemplazar `PROD123` por un código que exista en tu base de datos de Finnegans.)
+- [ ] Confirmar que:
+  - El agente usa `buscar_api` para encontrar el endpoint.
+  - El agente usa `ver_api` para ver los parámetros.
+  - El agente usa `consultar_finnegans` para traer los datos.
+  - Los datos se devuelven **sin errores** (no 401, 403, 500).
+  - La respuesta es en **castellano claro**.
+
+**Criterio de aceptación:** Claude Desktop ejecuta una consulta real contra Finnegans y devuelve datos correctos sin error de autenticación.
+
+---
+
+### Paso 4: Escritura de prueba controlada con auditoría
+
+**Objetivo:** validar que la escritura requiere confirmación, muestra preview, genera auditoría sin exponer tokens.
+
+- [ ] En Claude, escribir un mensaje de **escritura sobre un registro descartable** (algo que no importe borrar después), ejemplo:
+  ```
+  Prepará la creación de una nota o comentario interno en un cliente de prueba. Mostrámelo para confirmar. No ejecutes sin mi OK.
+  ```
+- [ ] Confirmar que:
+  - [ ] El agente **NO ejecuta inmediatamente**.
+  - [ ] Muestra un **PREVIEW** con los campos exactos que va a cambiar.
+  - [ ] Muestra el **código** que va a ejecutar.
+  - [ ] Pregunta: *"¿Confirmás? (sí / no)"* esperando confirmación explícita.
+- [ ] Escribir en la conversación:
+  ```
+  Sí, confirmá.
+  ```
+- [ ] Confirmar que:
+  - [ ] Ahora SÍ ejecuta `ejecutar_cambio`.
+  - [ ] Muestra "Listo" o mensaje de éxito.
+  - [ ] **No hay errores** de permisos (401, 403) ni validación (400).
+- [ ] **Verificación posterior:** escribir en Claude:
+  ```
+  Buscá el registro que acabo de crear/modificar. Tráeme sus datos actualizados para confirmar que el cambio está.
+  ```
+  Confirmar que el agente trae el registro con los cambios reflejados.
+- [ ] **Revisar auditoría** — abrir PowerShell y ejecutar:
+  ```powershell
+  Get-Content C:\FinnegansAgent\audit\finnegans-audit.jsonl | Select-Object -Last 10
+  ```
+  (O la ruta donde hayas configurado `FINNEGANS_AUDIT_PATH`.)
+
+  Confirmar que aparecen **al menos 2 líneas** para tu cambio:
+  1. Línea con `"evento": "preparado"` → debe tener `"operador": "<tu_usuario_de_prueba>"`, **SIN `token`**.
+  2. Línea con `"evento": "ejecutado"` → debe tener `"operador": "<tu_usuario_de_prueba>"`, **SIN `token`**.
+
+**Criterio de aceptación:**
+- El flujo es: preparación → preview → confirmación explícita → ejecución
+- Los datos se actualicen realmente en Finnegans
+- Verificación posterior confirma el cambio
+- El log de auditoría registre ambos eventos (`preparado` y `ejecutado`) con el operador correcto
+- **Ningún token está expuesto en el log**
+
+---
+
+### Resumen: Checklist de aceptación por PC
+
+**Antes de entregar, confirma que:**
+
+- [ ] **Paso 1:** `.env` tiene credenciales acotadas y `FINNEGANS_OPERATOR` definido
+- [ ] **Paso 2:** `python verify_setup.py` finaliza con TODO OK (6/6)
+- [ ] **Paso 3:** Lectura real en Claude trae datos correctos desde Finnegans
+- [ ] **Paso 4:** Escritura con validación, preview, confirmación y auditoría funcionan
+
+**Si algún paso falla:**
+1. Lee el error.
+2. Investiga la causa (credenciales vencidas, conectividad, permisos).
+3. Corrige el punto.
+4. Repite el paso que falló.
+5. **No avances** hasta que el paso anterior pase completamente.
+
+---
+
+### Entrega al líder (usuario final)
+
+Una vez que los 4 pasos pasen, entregá la PC con:
 
 - [ ] Claude Desktop instalado y con sesión iniciada
-- [ ] Proyecto "Finnegans" creado con instrucciones cargadas
-- [ ] `verify_setup.py` ejecutado con TODO OK
-- [ ] Smoke test de lectura probado con un código real
-- [ ] `.env` **no** compartido ni documentado para el líder
-- [ ] Acceso directo o pin a Claude Desktop (opcional)
+- [ ] Proyecto "Finnegans" creado con instrucciones del archivo `ASSISTANT_INSTRUCTIONS.md` cargadas
+- [ ] `verify_setup.py` ejecutado exitosamente con TODO OK
+- [ ] Lectura real probada con un código real de Finnegans
+- [ ] `.env` **no** compartido con el líder (IT lo guarda)
+- [ ] Acceso rápido a Claude Desktop (opcional: acceso directo o pin a la barra de tareas)
 
-**Lo que el líder necesita saber (una frase):**  
-*"Abrí Claude, entrá al proyecto Finnegans, y preguntá en castellano. Si te pide confirmar un cambio, leé el resumen y decí sí o no."*
+**Nota simple para el líder:**  
+*"Abrí Claude, entrá al proyecto Finnegans, y preguntá en castellano qué necesitás. Si te pide confirmar un cambio, leé el resumen y decí sí o no. ¿Preguntas? Llamá a IT."*
 
 ---
 
