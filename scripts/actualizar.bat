@@ -3,11 +3,14 @@ setlocal
 title Actualizar asistente Finnegans
 
 rem ===================================================================
-rem  OPCIONAL (lo completa IT antes de enviar el archivo)
-rem  Si el .env del lider no tiene la clave de documentacion, el script
-rem  la agrega solo usando este valor. Si se deja vacio, el script avisa
-rem  y no toca nada.
-set "CLAVE_DOC="
+rem  Clave de lectura de la documentacion de APIs (swaggerGlobal).
+rem  Si el .env del lider no la tiene, el script la agrega con este
+rem  valor. Si se deja vacio, el script avisa y no toca nada.
+rem
+rem  ATENCION IT: este valor esta versionado en un repo publico. Cuando
+rem  se rote la clave con Finnegans, hay que actualizarla aca y dejar de
+rem  versionarla (moverla a un canal privado hacia el lider).
+set "CLAVE_DOC=435f45445548"
 rem ===================================================================
 
 echo.
