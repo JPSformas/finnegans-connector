@@ -1,5 +1,4 @@
 @echo off
-setlocal
 title Actualizar asistente Finnegans
 
 rem ===================================================================
@@ -13,12 +12,33 @@ rem  versionarla (moverla a un canal privado hacia el lider).
 set "CLAVE_DOC=435f45445548"
 rem ===================================================================
 
-rem  OJO AL EDITAR O REENVIAR ESTE ARCHIVO
-rem  Ninguna linea debe pasar de ~100 caracteres. Si un cliente de mail,
-rem  un editor o un portapapeles corta una linea larga al medio, cmd
-rem  ejecuta los pedazos como comandos ("-Path no se reconoce...") y el
-rem  script sigue adelante como si todo hubiera salido bien. Por eso los
-rem  comandos de PowerShell se arman por pedazos en variables cortas.
+rem  ---------------------------------------------------------------
+rem  RELANZARSE DESDE %TEMP% -- NO SACAR ESTO
+rem  Este script actualiza la carpeta del conector, y el script vive
+rem  DENTRO de esa carpeta. cmd lee los .bat por offset de bytes
+rem  mientras los ejecuta, asi que si el archivo se reemplaza en pleno
+rem  vuelo la siguiente lectura cae en medio de otra linea: cmd ejecuta
+rem  fragmentos ("hell" de "powershell", "-Path", "fined"...) y despues
+rem  repite pasos ya hechos. Por eso lo primero es correr desde una
+rem  copia en %TEMP%, donde nada la va a sobreescribir.
+rem  ---------------------------------------------------------------
+set "COPIA=%TEMP%\fnx-actualizador"
+if /i "%~dp0"=="%COPIA%\" goto :arranque
+if not exist "%COPIA%" mkdir "%COPIA%" >nul 2>&1
+copy /y "%~f0" "%COPIA%\actualizar.bat" >nul 2>&1
+if errorlevel 1 goto :arranque
+call "%COPIA%\actualizar.bat"
+exit /b
+
+:arranque
+setlocal
+rem Rutas absolutas a las herramientas del sistema: un PATH raro (o el
+rem de Git para Windows, que trae sus propias versiones) no puede
+rem hacernos ejecutar otro binario del que creemos.
+set "SYS=%SystemRoot%\System32"
+set "PATH=%SYS%;%SYS%\WindowsPowerShell\v1.0;%PATH%"
+set "URL_GIT=https://github.com/JPSformas/finnegans-connector.git"
+set "URL_ZIP=https://github.com/JPSformas/finnegans-connector/archive/refs/heads/master.zip"
 
 echo.
 echo   ===============================================
@@ -158,9 +178,9 @@ goto :fin
 :err_descarga
 echo.
 echo   NO PUDE SEGUIR
-echo   No pude descargar la version nueva. Puede ser tu conexion a
-echo   internet. Revisala y volve a intentar; si sigue fallando,
-echo   mandale a IT este archivo:
+echo   No pude traer la version nueva. Puede ser tu conexion a internet,
+echo   o el antivirus bloqueando la descarga. Volve a intentar; si sigue
+echo   fallando, mandale a IT este archivo:
 echo      %LOG%
 goto :fin
 
@@ -206,44 +226,58 @@ exit /b
 
 rem ================== Subrutinas =====================================
 
-rem Actualiza el codigo. Dos caminos, segun como se instalo:
-rem   - con git (hay carpeta .git): pull de master.
-rem   - copiando la carpeta: se baja el ZIP del repo publico.
-rem El ZIP no incluye .env, audit/ ni exports/ porque estan en
-rem .gitignore, asi que copiar encima no puede tocar las credenciales ni
-rem el historial de auditoria del lider.
-rem Si el pull falla -- por ejemplo, la rama local quedo divergida -- se
-rem cae al ZIP en vez de cortar: el resultado es el mismo y no deja al
-rem lider sin salida.
+rem Actualiza el codigo dejando la carpeta igual a origin/master.
+rem
+rem Camino preferido: git. Si la carpeta no es un clon (las instalaciones
+rem viejas se hacian copiando un ZIP a mano) se convierte en clon con
+rem init + remote + fetch, y de ahi en adelante es un repo normal.
+rem "checkout -f -B master origin/master" cubre de una el caso de la rama
+rem divergida, que con "pull --ff-only" quedaba sin salida. Pisa los
+rem archivos versionados; .env, audit/ y exports/ no lo son, asi que las
+rem credenciales y la auditoria quedan intactas.
+rem
+rem Camino de respaldo: curl + tar, los dos nativos de Windows (system32
+rem desde la 1803). Se usa en lugar de bajar el ZIP con PowerShell porque
+rem Windows Defender marca ese patron (Invoke-WebRequest + Expand-Archive
+rem + Copy-Item en un solo -Command) como Trojan:Win32/Commando.A!ml y
+rem mata el proceso.
 
 :actualizar_codigo
-if not exist "%DIR%\.git" goto :actualizar_por_zip
 where git >nul 2>&1
 if errorlevel 1 goto :actualizar_por_zip
-git -C "%DIR%" fetch origin --quiet 2>>"%LOG%"
+if not exist "%DIR%\.git" call :convertir_en_clon
+git -C "%DIR%" fetch origin master --quiet 2>>"%LOG%"
 if errorlevel 1 goto :actualizar_por_zip
-git -C "%DIR%" checkout master --quiet 2>>"%LOG%"
-if errorlevel 1 goto :actualizar_por_zip
-git -C "%DIR%" pull --ff-only origin master --quiet 2>>"%LOG%"
+git -C "%DIR%" checkout --quiet -f -B master origin/master 2>>"%LOG%"
 if errorlevel 1 goto :actualizar_por_zip
 exit /b 0
 
+:convertir_en_clon
+git -C "%DIR%" init --quiet 2>>"%LOG%"
+git -C "%DIR%" remote add origin "%URL_GIT%" 2>>"%LOG%"
+exit /b 0
+
 :actualizar_por_zip
-set "URL=https://github.com/JPSformas/finnegans-connector/archive/refs/heads/master.zip"
-set "Z1=$ErrorActionPreference='Stop'; try{"
-set "Z2= $t=Join-Path $env:TEMP ('fnx_'+[guid]::NewGuid().ToString('N'));"
-set "Z3= [void](New-Item -ItemType Directory -Path $t -Force);"
-set "Z4= $z=Join-Path $t 'm.zip'; $tls=[Net.SecurityProtocolType]::Tls12;"
-set "Z5= [Net.ServicePointManager]::SecurityProtocol=$tls;"
-set "Z6= Invoke-WebRequest -Uri '%URL%' -OutFile $z -UseBasicParsing;"
-set "Z7= Expand-Archive -Path $z -DestinationPath $t -Force;"
-set "Z8= $d=@(Get-ChildItem -Path $t -Directory); if($d.Count -lt 1){ exit 1 };"
-set "Z9= $src=Join-Path $d[0].FullName '*';"
-set "ZA= Copy-Item -Path $src -Destination '%DIR%' -Recurse -Force;"
-set "ZB= [IO.Directory]::Delete($t,$true)"
-set "ZC=}catch{ Write-Error $_; exit 1 }"
-powershell -NoProfile -Command "%Z1%%Z2%%Z3%%Z4%%Z5%%Z6%%Z7%%Z8%%Z9%%ZA%%ZB%%ZC%" 2>>"%LOG%"
+set "TMPZ=%TEMP%\fnx-zip"
+if exist "%TMPZ%" rd /s /q "%TMPZ%" >nul 2>&1
+mkdir "%TMPZ%" >nul 2>&1
+rem Por ruta absoluta a proposito: si el lider tiene Git para Windows, su
+rem PATH puede resolver "tar" al GNU tar que trae Git, que no lee ZIP.
+rem El de System32 es bsdtar (libarchive) y si lo lee.
+set "CURL=%SYS%\curl.exe"
+set "TAR=%SYS%\tar.exe"
+if not exist "%CURL%" exit /b 1
+if not exist "%TAR%" exit /b 1
+"%CURL%" -sSL --fail -o "%TMPZ%\m.zip" "%URL_ZIP%" 2>>"%LOG%"
 if errorlevel 1 exit /b 1
+"%TAR%" -xf "%TMPZ%\m.zip" -C "%TMPZ%" 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+set "RAIZ="
+for /d %%d in ("%TMPZ%\finnegans-connector-*") do set "RAIZ=%%d"
+if not defined RAIZ exit /b 1
+xcopy "%RAIZ%\*" "%DIR%\" /e /y /q >nul 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+rd /s /q "%TMPZ%" >nul 2>&1
 exit /b 0
 
 rem Agrega FINNEGANS_SWAGGER_KEY al .env solo si falta. Es idempotente a
@@ -251,17 +285,11 @@ rem proposito: si el script se corre dos veces, o si la deteccion falla,
 rem no puede dejar la variable duplicada.
 
 :revisar_clave
-set "K1=$p='%DIR%\.env'; $pat='^FINNEGANS_SWAGGER_KEY=..';"
-set "K2=try{ if(Select-String -Path $p -Pattern $pat -Quiet){'SI'}"
-set "K3=else{'NO'} }catch{'ERROR'}"
-set "KALL=%K1%%K2%%K3%"
-set "TIENE_CLAVE="
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "%KALL%"`) do set "TIENE_CLAVE=%%i"
-if "%TIENE_CLAVE%"=="SI" (
+findstr /b /c:"FINNEGANS_SWAGGER_KEY=" "%DIR%\.env" >nul 2>&1
+if not errorlevel 1 (
   echo         Configuracion completa.
   exit /b 0
 )
-if not "%TIENE_CLAVE%"=="NO" exit /b 1
 if not defined CLAVE_DOC exit /b 1
 set "A1=$p='%DIR%\.env'; $nl=[Environment]::NewLine;"
 set "A2=$t=[IO.File]::ReadAllText($p);"
