@@ -93,3 +93,54 @@ class TestEjecutarCambio(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _ClienteQueFalla:
+    """Cliente cuyo POST rompe con el error crudo real de la API."""
+
+    CRUDO = 'Error en POST cliente (HTTP 500): {"error":"Internal Server Error"}'
+
+    def __init__(self):
+        self.calls = []
+
+    def request(self, method, endpoint, id=None, params=None, body=None):
+        self.calls.append((method, endpoint, id))
+        raise FinnegansError(self.CRUDO)
+
+
+class TestEjecutarCambioConError(unittest.TestCase):
+    """Un lider tampoco tiene que ver el error crudo cuando falla una escritura."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.log = Path(self.dir.name) / "a.jsonl"
+        server._audit = AuditLog(str(self.log), "TEST")
+        server._changes.__init__()
+        self.fake = _ClienteQueFalla()
+        server._client = self.fake
+
+    def tearDown(self):
+        server._client = None
+        self.dir.cleanup()
+
+    def _ejecutar(self):
+        p = server._changes.prepare(
+            api_id="cliente", metodo="POST", resource_id=None, parametros=None,
+            body={"Nombre": "X"}, resumen="crear", codigo="4321",
+            preview="...", alto_riesgo=False,
+        )
+        return server.ejecutar_cambio(p.confirmacion_id, "4321")
+
+    def test_devuelve_mensaje_traducido_y_no_el_crudo(self):
+        out = self._ejecutar()
+        self.assertIn("ver_api", out)
+        self.assertNotIn("500", out)
+        self.assertNotIn("Internal Server Error", out)
+
+    def test_aclara_que_el_cambio_no_se_aplico(self):
+        out = self._ejecutar()
+        self.assertIn("no se aplico", out.lower())
+
+    def test_la_auditoria_conserva_el_detalle_crudo_para_it(self):
+        self._ejecutar()
+        self.assertIn("Internal Server Error", self.log.read_text(encoding="utf-8"))
