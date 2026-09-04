@@ -339,3 +339,144 @@ class TestRankeoPrecision(unittest.TestCase):
         exacto = next(x for x in r if x["path"] == "/movimientoFondos")
         parcial = next(x for x in r if x["path"] == "/rendicionFondos/list")
         self.assertGreater(exacto["score"], parcial["score"])
+
+
+# --- Parametros por $ref y a nivel path (como los declara Finnegans) ---
+
+SPEC_PARAMS = {
+    "swagger": "2.0",
+    "definitions": {
+        "ParametroToken": {"name": "ACCESS_TOKEN", "in": "query", "required": True,
+                           "description": "Token de autorizacion"},
+        "ParametroCodigo": {"name": "codigo", "in": "path", "required": True,
+                            "description": "Codigo de la entidad a trabajar"},
+        "ParametroUpdateSince": {"name": "updatedSince", "in": "query", "required": False,
+                                 "description": "Desde ultima actualizacion"},
+    },
+    "paths": {
+        "/movimientoFondos/list": {
+            "get": {"tags": ["movimientoFondos"], "summary": "movimientoFondos",
+                    "parameters": [{"$ref": "#/definitions/ParametroUpdateSince"}]},
+            "parameters": [{"$ref": "#/definitions/ParametroToken"}],
+        },
+        "/movimientoFondos/{codigo}": {
+            "get": {"tags": ["movimientoFondos"], "summary": "movimientoFondos",
+                    "parameters": []},
+            "parameters": [{"$ref": "#/definitions/ParametroToken"},
+                           {"$ref": "#/definitions/ParametroCodigo"}],
+        },
+        "/repetido/{codigo}": {
+            "get": {"tags": ["repetido"], "summary": "repetido",
+                    "parameters": [{"$ref": "#/definitions/ParametroCodigo"}]},
+            "parameters": [{"$ref": "#/definitions/ParametroCodigo"}],
+        },
+    },
+}
+
+
+def _op(spec, recurso, path):
+    return next(o for o in sc.ver_endpoint(spec, recurso) if o["path"] == path)
+
+
+class TestParametrosPorRef(unittest.TestCase):
+    def test_resuelve_el_parametro_declarado_como_ref(self):
+        op = _op(SPEC_PARAMS, "movimientoFondos", "/movimientoFondos/list")
+        p = next(p for p in op["parametros"] if p["nombre"] == "updatedSince")
+        self.assertEqual(p["ubicacion"], "query")
+        self.assertFalse(p["requerido"])
+        self.assertIn("actualizacion", p["descripcion"])
+
+    def test_nunca_devuelve_un_parametro_sin_nombre(self):
+        for op in sc.ver_endpoint(SPEC_PARAMS, "movimientoFondos"):
+            for p in op["parametros"]:
+                self.assertIsNotNone(p["nombre"], op["path"])
+
+
+class TestParametrosDeNivelPath(unittest.TestCase):
+    def test_incluye_el_codigo_declarado_en_el_path(self):
+        op = _op(SPEC_PARAMS, "movimientoFondos", "/movimientoFondos/{codigo}")
+        p = next(p for p in op["parametros"] if p["nombre"] == "codigo")
+        self.assertEqual(p["ubicacion"], "path")
+        self.assertTrue(p["requerido"])
+
+    def test_sigue_excluyendo_el_access_token(self):
+        for op in sc.ver_endpoint(SPEC_PARAMS, "movimientoFondos"):
+            nombres = [p["nombre"] for p in op["parametros"]]
+            self.assertNotIn("ACCESS_TOKEN", nombres, op["path"])
+
+    def test_no_duplica_el_parametro_declarado_en_los_dos_niveles(self):
+        op = _op(SPEC_PARAMS, "repetido", "/repetido/{codigo}")
+        nombres = [p["nombre"] for p in op["parametros"]]
+        self.assertEqual(nombres.count("codigo"), 1)
+
+
+# --- Vocabulario de negocio en la busqueda (acentos, plurales, sinonimos) ---
+
+def _ep(nombre, path=None):
+    return {path or f"/{nombre}": {"get": {"tags": [nombre], "summary": nombre,
+                                           "operationId": f"{nombre}_get"}}}
+
+
+SPEC_VOCAB = {"swagger": "2.0", "paths": {
+    **_ep("movimientoFondos"),
+    **_ep("ordenPago"),
+    **_ep("cobranza"),
+    **_ep("banco"),
+    **_ep("resumenBancario"),
+    **_ep("despacho"),
+    **_ep("cliente", "/cliente/list"),
+    **_ep("ApiSituacionCheques", "/reports/ApiSituacionCheques"),
+    **_ep("stockDeposito", "/reports/stockDeposito"),
+}}
+
+
+def _paths(consulta, spec=SPEC_VOCAB):
+    return [x["path"] for x in sc.buscar_endpoints(spec, consulta)]
+
+
+class TestConsultaConAcentos(unittest.TestCase):
+    def test_tesoreria_con_tilde_encuentra_los_endpoints_de_fondos(self):
+        paths = _paths("tesorería")
+        self.assertIn("/movimientoFondos", paths)
+
+    def test_la_tilde_no_parte_la_palabra(self):
+        # Sin normalizar, 'tesoreria' tokenizaba como ['tesorer', 'a'] y 'a'
+        # matcheaba cualquier cosa.
+        self.assertEqual(_paths("tesorería"), _paths("tesoreria"))
+
+
+class TestSingularYPlural(unittest.TestCase):
+    def test_cheque_en_singular_encuentra_el_reporte_de_cheques(self):
+        self.assertIn("/reports/ApiSituacionCheques", _paths("cheque"))
+
+    def test_cheques_en_plural_sigue_funcionando(self):
+        self.assertIn("/reports/ApiSituacionCheques", _paths("cheques"))
+
+    def test_singular_y_plural_dan_lo_mismo(self):
+        self.assertEqual(_paths("cheque"), _paths("cheques"))
+
+
+class TestSinonimosDeNegocio(unittest.TestCase):
+    def test_caja_encuentra_movimiento_de_fondos(self):
+        self.assertIn("/movimientoFondos", _paths("caja"))
+
+    def test_banco_tambien_encuentra_lo_bancario(self):
+        self.assertIn("/resumenBancario", _paths("banco"))
+
+    def test_remito_encuentra_despacho(self):
+        self.assertIn("/despacho", _paths("remito"))
+
+    def test_inventario_encuentra_stock(self):
+        self.assertIn("/reports/stockDeposito", _paths("inventario"))
+
+
+class TestVocabularioNoRompeElRankeo(unittest.TestCase):
+    def test_el_recurso_exacto_sigue_primero(self):
+        self.assertEqual(_paths("cliente")[0], "/cliente/list")
+
+    def test_una_consulta_sin_relacion_sigue_vacia(self):
+        self.assertEqual(_paths("zzz-inexistente"), [])
+
+    def test_el_sinonimo_no_le_gana_al_nombre_literal(self):
+        # 'banco' esta en el nombre de /banco y solo es sinonimo de bancario.
+        self.assertEqual(_paths("banco")[0], "/banco")

@@ -14,7 +14,39 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PLACEHOLDERS = ("tu_client_id", "tu_client_secret", "tu_docs_client_id", "tu_docs_secret_key")
+PLACEHOLDERS = (
+    "tu_client_id", "tu_client_secret", "tu_docs_client_id", "tu_docs_secret_key",
+    "tu_swagger_key",
+)
+
+# Sin cualquiera de estas el conector no arranca o queda a medias. La swagger
+# key es la que habilita buscar_api / ver_api / preparar_cambio: si falta, el
+# descubrimiento de APIs esta roto aunque la conexion a la API funcione.
+VARIABLES_REQUERIDAS = (
+    "FINNEGANS_CLIENT_ID",
+    "FINNEGANS_CLIENT_SECRET",
+    "FINNEGANS_DOCS_CLIENT_ID",
+    "FINNEGANS_DOCS_SECRET_KEY",
+    "FINNEGANS_SWAGGER_KEY",
+)
+
+
+def validar_env(content: str) -> list[str]:
+    """Devuelve un error por cada variable requerida ausente, vacia o de ejemplo."""
+    errores: list[str] = []
+    for key in VARIABLES_REQUERIDAS:
+        valor = None
+        for line in content.splitlines():
+            if line.startswith(f"{key}="):
+                valor = line.split("=", 1)[1].strip()
+                break
+        if valor is None:
+            errores.append(f"Falta la variable {key} en .env")
+        elif not valor:
+            errores.append(f"{key} esta vacio")
+        elif valor in PLACEHOLDERS:
+            errores.append(f"{key} sigue con valor de ejemplo ({valor})")
+    return errores
 
 
 def ok(msg: str) -> None:
@@ -49,31 +81,20 @@ def check_env_file() -> bool:
     ok(f"Encontrado: {env_path}")
 
     content = env_path.read_text(encoding="utf-8")
-    errors = False
-    required = [
-        "FINNEGANS_CLIENT_ID",
-        "FINNEGANS_CLIENT_SECRET",
-        "FINNEGANS_DOCS_CLIENT_ID",
-        "FINNEGANS_DOCS_SECRET_KEY",
-    ]
-    for key in required:
-        if key not in content:
-            fail(f"Falta la variable {key} en .env")
-            errors = True
+    errores = validar_env(content)
+    for e in errores:
+        fail(e)
+    fallidas = {k for k in VARIABLES_REQUERIDAS if any(k in e for e in errores)}
+    for key in VARIABLES_REQUERIDAS:
+        if key in fallidas:
             continue
-        for line in content.splitlines():
-            if line.startswith(f"{key}="):
-                val = line.split("=", 1)[1].strip()
-                if not val:
-                    fail(f"{key} esta vacio")
-                    errors = True
-                elif val in PLACEHOLDERS:
-                    fail(f"{key} sigue con valor de ejemplo ({val})")
-                    errors = True
-                else:
-                    ok(f"{key} configurado (len={len(val)})")
-                break
-    return not errors
+        valor = next(
+            (l.split("=", 1)[1].strip() for l in content.splitlines()
+             if l.startswith(f"{key}=")),
+            "",
+        )
+        ok(f"{key} configurado (len={len(valor)})")
+    return not errores
 
 
 def check_dependencies() -> bool:
