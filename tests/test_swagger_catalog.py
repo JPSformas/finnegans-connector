@@ -339,3 +339,72 @@ class TestRankeoPrecision(unittest.TestCase):
         exacto = next(x for x in r if x["path"] == "/movimientoFondos")
         parcial = next(x for x in r if x["path"] == "/rendicionFondos/list")
         self.assertGreater(exacto["score"], parcial["score"])
+
+
+# --- Parametros por $ref y a nivel path (como los declara Finnegans) ---
+
+SPEC_PARAMS = {
+    "swagger": "2.0",
+    "definitions": {
+        "ParametroToken": {"name": "ACCESS_TOKEN", "in": "query", "required": True,
+                           "description": "Token de autorizacion"},
+        "ParametroCodigo": {"name": "codigo", "in": "path", "required": True,
+                            "description": "Codigo de la entidad a trabajar"},
+        "ParametroUpdateSince": {"name": "updatedSince", "in": "query", "required": False,
+                                 "description": "Desde ultima actualizacion"},
+    },
+    "paths": {
+        "/movimientoFondos/list": {
+            "get": {"tags": ["movimientoFondos"], "summary": "movimientoFondos",
+                    "parameters": [{"$ref": "#/definitions/ParametroUpdateSince"}]},
+            "parameters": [{"$ref": "#/definitions/ParametroToken"}],
+        },
+        "/movimientoFondos/{codigo}": {
+            "get": {"tags": ["movimientoFondos"], "summary": "movimientoFondos",
+                    "parameters": []},
+            "parameters": [{"$ref": "#/definitions/ParametroToken"},
+                           {"$ref": "#/definitions/ParametroCodigo"}],
+        },
+        "/repetido/{codigo}": {
+            "get": {"tags": ["repetido"], "summary": "repetido",
+                    "parameters": [{"$ref": "#/definitions/ParametroCodigo"}]},
+            "parameters": [{"$ref": "#/definitions/ParametroCodigo"}],
+        },
+    },
+}
+
+
+def _op(spec, recurso, path):
+    return next(o for o in sc.ver_endpoint(spec, recurso) if o["path"] == path)
+
+
+class TestParametrosPorRef(unittest.TestCase):
+    def test_resuelve_el_parametro_declarado_como_ref(self):
+        op = _op(SPEC_PARAMS, "movimientoFondos", "/movimientoFondos/list")
+        p = next(p for p in op["parametros"] if p["nombre"] == "updatedSince")
+        self.assertEqual(p["ubicacion"], "query")
+        self.assertFalse(p["requerido"])
+        self.assertIn("actualizacion", p["descripcion"])
+
+    def test_nunca_devuelve_un_parametro_sin_nombre(self):
+        for op in sc.ver_endpoint(SPEC_PARAMS, "movimientoFondos"):
+            for p in op["parametros"]:
+                self.assertIsNotNone(p["nombre"], op["path"])
+
+
+class TestParametrosDeNivelPath(unittest.TestCase):
+    def test_incluye_el_codigo_declarado_en_el_path(self):
+        op = _op(SPEC_PARAMS, "movimientoFondos", "/movimientoFondos/{codigo}")
+        p = next(p for p in op["parametros"] if p["nombre"] == "codigo")
+        self.assertEqual(p["ubicacion"], "path")
+        self.assertTrue(p["requerido"])
+
+    def test_sigue_excluyendo_el_access_token(self):
+        for op in sc.ver_endpoint(SPEC_PARAMS, "movimientoFondos"):
+            nombres = [p["nombre"] for p in op["parametros"]]
+            self.assertNotIn("ACCESS_TOKEN", nombres, op["path"])
+
+    def test_no_duplica_el_parametro_declarado_en_los_dos_niveles(self):
+        op = _op(SPEC_PARAMS, "repetido", "/repetido/{codigo}")
+        nombres = [p["nombre"] for p in op["parametros"]]
+        self.assertEqual(nombres.count("codigo"), 1)

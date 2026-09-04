@@ -187,6 +187,22 @@ def _primer_segmento(path: str) -> str:
     return path.strip("/").split("/")[0]
 
 
+def _resolver_parametro(spec: dict, p: dict) -> dict:
+    """Resuelve un parametro declarado como $ref interno.
+
+    Finnegans declara los parametros comunes (ACCESS_TOKEN, codigo,
+    updatedSince) una sola vez en 'definitions' y los referencia. Sin
+    resolverlos, p['name'] es None y ver_api mostraba 'None (None)'.
+    """
+    if not isinstance(p, dict):
+        return {}
+    ref = p.get("$ref")
+    if not ref or _es_ref_externa(ref):
+        return p
+    nombre = ref.split("/")[-1]
+    return (spec.get("definitions") or {}).get(nombre, {})
+
+
 def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
     objetivo = recurso.strip("/")
     ops: list[dict] = []
@@ -196,14 +212,19 @@ def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
         coincide = path.strip("/") == objetivo or _primer_segmento(path) == objetivo
         if not coincide:
             continue
+        # Parametros declarados a nivel path: valen para todos sus metodos
+        # (ahi viven ACCESS_TOKEN y el 'codigo' de /recurso/{codigo}).
+        comunes = metodos.get("parameters") or []
         for m, detail in metodos.items():
             if m.lower() not in _METODOS_HTTP or not isinstance(detail, dict):
                 continue
             params, tiene_body, campos, requeridos = [], False, [], []
             body_schema: dict | None = None
             body_ok = False
-            for p in detail.get("parameters") or []:
-                if not isinstance(p, dict):
+            vistos: set[tuple[str, str]] = set()
+            for p in list(comunes) + list(detail.get("parameters") or []):
+                p = _resolver_parametro(spec, p)
+                if not isinstance(p, dict) or not p:
                     continue
                 if p.get("in") == "body":
                     tiene_body = True
@@ -211,7 +232,11 @@ def ver_endpoint(spec: dict, recurso: str) -> list[dict]:
                     body_schema = resuelto if body_ok else None
                     campos = list((resuelto.get("properties") or {}).keys())
                     requeridos = list(resuelto.get("required") or [])
-                elif p.get("name") != "ACCESS_TOKEN":
+                elif p.get("name") and p.get("name") != "ACCESS_TOKEN":
+                    clave = (p.get("name"), p.get("in") or "")
+                    if clave in vistos:
+                        continue  # declarado a nivel path y de operacion
+                    vistos.add(clave)
                     params.append({
                         "nombre": p.get("name"),
                         "requerido": bool(p.get("required", False)),
