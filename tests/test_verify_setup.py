@@ -66,3 +66,37 @@ class TestVariablesRequeridas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestValidarBaseUrl(unittest.TestCase):
+    """Caso real: el .env llego con 'httpsapi.finneg.com' (sin '://')."""
+
+    def test_url_sin_esquema_es_error(self):
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=httpsapi.finneg.com\n"
+        errores = verify_setup.validar_env(env)
+        self.assertEqual(len(errores), 1)
+        self.assertIn("FINNEGANS_BASE_URL", errores[0])
+
+    def test_el_error_muestra_el_valor_recibido(self):
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=httpsapi.finneg.com\n"
+        self.assertIn("httpsapi.finneg.com", verify_setup.validar_env(env)[0])
+
+    def test_https_es_valida(self):
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=https://api.finneg.com\n"
+        self.assertEqual(verify_setup.validar_env(env), [])
+
+    def test_http_es_valida(self):
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=http://localhost:8080\n"
+        self.assertEqual(verify_setup.validar_env(env), [])
+
+    def test_ausente_no_es_error_porque_hay_default(self):
+        self.assertEqual(verify_setup.validar_env(ENV_COMPLETO), [])
+
+    def test_vacia_no_es_error_porque_cae_al_default(self):
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=\n"
+        self.assertEqual(verify_setup.validar_env(env), [])
+
+    def test_no_confunde_httpsapi_con_http(self):
+        # Buscar solo "http" daba por buena la linea dañada.
+        env = ENV_COMPLETO + "FINNEGANS_BASE_URL=httpsapi.finneg.com\n"
+        self.assertTrue(verify_setup.validar_env(env))
