@@ -1,9 +1,13 @@
 # Secrets — NUNCA commitear
 .env
 *.env
+.env.*
 !.env.example
 !service-credentials.env.example
 service-credentials.env
+
+# Log del actualizador (rutas locales y detalle tecnico)
+actualizacion-error.txt
 
 # Auditoria (logs locales, no versionar)
 audit/
