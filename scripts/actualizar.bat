@@ -26,8 +26,12 @@ echo.
 
 rem --- 1. Ubicar la instalacion leyendo la config de Claude -----------
 echo   [1/6] Buscando la instalacion...
-set "CFG=%APPDATA%\Claude\claude_desktop_config.json"
-if not exist "%CFG%" goto :err_sin_config
+rem Claude Desktop puede estar instalado desde la Store (MSIX), y ahi el
+rem config vive dentro del paquete. Se prueba esa ruta primero, igual que
+rem hace verify_setup.py, y despues la clasica de %APPDATA%.
+set "CFG="
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$c=@(); try{ foreach($d in [IO.Directory]::GetDirectories((Join-Path $env:LOCALAPPDATA 'Packages'),'Claude_*')){ $c+=(Join-Path $d 'LocalCache\Roaming\Claude\claude_desktop_config.json') } }catch{}; $c+=(Join-Path $env:APPDATA 'Claude\claude_desktop_config.json'); foreach($p in $c){ if(Test-Path $p){ $p; break } }"`) do set "CFG=%%i"
+if not defined CFG goto :err_sin_config
 
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try{$c=Get-Content '%CFG%' -Raw; $j=ConvertFrom-Json $c; $s=$j.mcpServers.'finnegans-agent'; Split-Path -Parent $s.args[0]}catch{}"`) do set "DIR=%%i"
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try{$c=Get-Content '%CFG%' -Raw; $j=ConvertFrom-Json $c; $j.mcpServers.'finnegans-agent'.command}catch{}"`) do set "PY=%%i"
