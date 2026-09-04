@@ -46,6 +46,20 @@ def validar_env(content: str) -> list[str]:
             errores.append(f"{key} esta vacio")
         elif valor in PLACEHOLDERS:
             errores.append(f"{key} sigue con valor de ejemplo ({valor})")
+
+    # La URL base no es obligatoria (hay default), pero si viene y esta mal
+    # el conector falla al pedir el token. Pasa cuando el .env se copia como
+    # texto y "https://" pierde los dos puntos y las barras.
+    for line in content.splitlines():
+        if not line.startswith("FINNEGANS_BASE_URL="):
+            continue
+        base = line.split("=", 1)[1].strip()
+        if base and not base.lower().startswith(("http://", "https://")):
+            errores.append(
+                f"FINNEGANS_BASE_URL tiene que empezar con https:// y dice "
+                f"'{base}'. El valor correcto es https://api.finneg.com"
+            )
+        break
     return errores
 
 
