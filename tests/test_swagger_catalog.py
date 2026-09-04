@@ -408,3 +408,75 @@ class TestParametrosDeNivelPath(unittest.TestCase):
         op = _op(SPEC_PARAMS, "repetido", "/repetido/{codigo}")
         nombres = [p["nombre"] for p in op["parametros"]]
         self.assertEqual(nombres.count("codigo"), 1)
+
+
+# --- Vocabulario de negocio en la busqueda (acentos, plurales, sinonimos) ---
+
+def _ep(nombre, path=None):
+    return {path or f"/{nombre}": {"get": {"tags": [nombre], "summary": nombre,
+                                           "operationId": f"{nombre}_get"}}}
+
+
+SPEC_VOCAB = {"swagger": "2.0", "paths": {
+    **_ep("movimientoFondos"),
+    **_ep("ordenPago"),
+    **_ep("cobranza"),
+    **_ep("banco"),
+    **_ep("resumenBancario"),
+    **_ep("despacho"),
+    **_ep("cliente", "/cliente/list"),
+    **_ep("ApiSituacionCheques", "/reports/ApiSituacionCheques"),
+    **_ep("stockDeposito", "/reports/stockDeposito"),
+}}
+
+
+def _paths(consulta, spec=SPEC_VOCAB):
+    return [x["path"] for x in sc.buscar_endpoints(spec, consulta)]
+
+
+class TestConsultaConAcentos(unittest.TestCase):
+    def test_tesoreria_con_tilde_encuentra_los_endpoints_de_fondos(self):
+        paths = _paths("tesorería")
+        self.assertIn("/movimientoFondos", paths)
+
+    def test_la_tilde_no_parte_la_palabra(self):
+        # Sin normalizar, 'tesoreria' tokenizaba como ['tesorer', 'a'] y 'a'
+        # matcheaba cualquier cosa.
+        self.assertEqual(_paths("tesorería"), _paths("tesoreria"))
+
+
+class TestSingularYPlural(unittest.TestCase):
+    def test_cheque_en_singular_encuentra_el_reporte_de_cheques(self):
+        self.assertIn("/reports/ApiSituacionCheques", _paths("cheque"))
+
+    def test_cheques_en_plural_sigue_funcionando(self):
+        self.assertIn("/reports/ApiSituacionCheques", _paths("cheques"))
+
+    def test_singular_y_plural_dan_lo_mismo(self):
+        self.assertEqual(_paths("cheque"), _paths("cheques"))
+
+
+class TestSinonimosDeNegocio(unittest.TestCase):
+    def test_caja_encuentra_movimiento_de_fondos(self):
+        self.assertIn("/movimientoFondos", _paths("caja"))
+
+    def test_banco_tambien_encuentra_lo_bancario(self):
+        self.assertIn("/resumenBancario", _paths("banco"))
+
+    def test_remito_encuentra_despacho(self):
+        self.assertIn("/despacho", _paths("remito"))
+
+    def test_inventario_encuentra_stock(self):
+        self.assertIn("/reports/stockDeposito", _paths("inventario"))
+
+
+class TestVocabularioNoRompeElRankeo(unittest.TestCase):
+    def test_el_recurso_exacto_sigue_primero(self):
+        self.assertEqual(_paths("cliente")[0], "/cliente/list")
+
+    def test_una_consulta_sin_relacion_sigue_vacia(self):
+        self.assertEqual(_paths("zzz-inexistente"), [])
+
+    def test_el_sinonimo_no_le_gana_al_nombre_literal(self):
+        # 'banco' esta en el nombre de /banco y solo es sinonimo de bancario.
+        self.assertEqual(_paths("banco")[0], "/banco")

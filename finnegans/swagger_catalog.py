@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .vocabulario import sin_acentos, sinonimos_de, variantes
+
 
 class SwaggerError(Exception):
     """Error al cargar o interpretar el spec de swaggerGlobal."""
@@ -57,7 +59,7 @@ _METODOS_HTTP = {"get", "post", "put", "delete", "patch"}
 
 # Limite de palabra dentro de un identificador camelCase: "ordenPago" -> orden|Pago,
 # "getAPIDatos" -> get|API|Datos (la sigla no se parte letra por letra).
-_LIMITE_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_LIMITE_CAMEL = re.compile(r"(?<=[a-z0-9ñ])(?=[A-ZÑ])|(?<=[A-ZÑ])(?=[A-ZÑ][a-zñ])")
 
 
 def _tokens(texto: str) -> list[str]:
@@ -68,9 +70,12 @@ def _tokens(texto: str) -> list[str]:
     "ordenPago"), y sin esto una consulta como "movimiento de fondos" no
     matchea ningun endpoint. Se conserva tambien el identificador completo
     para que buscar "movimientoFondos" siga funcionando.
+
+    Los acentos se quitan antes de partir: un separador de palabras no puede
+    ser la tilde de "tesoreria", que partia la palabra en 'tesorer' y 'a'.
     """
     salida: list[str] = []
-    for crudo in re.split(r"[^A-Za-z0-9]+", texto or ""):
+    for crudo in re.split(r"[^A-Za-z0-9ñÑ]+", sin_acentos(texto)):
         if not crudo:
             continue
         salida.append(crudo.lower())
@@ -80,9 +85,28 @@ def _tokens(texto: str) -> list[str]:
     return salida
 
 
+def _conceptos(consulta: str) -> list[frozenset[str]]:
+    """Cada palabra de la consulta como el conjunto de formas que la satisfacen.
+
+    Una palabra se da por encontrada si aparece en singular o plural, o si
+    aparece alguno de sus sinonimos de negocio. Se agrupan por concepto (y no
+    como tokens sueltos) para que un sinonimo no infle el score: "caja" vale
+    uno, encuentre 'fondos' o 'cobranza'.
+    """
+    conceptos: list[frozenset[str]] = []
+    for t in dict.fromkeys(_tokens(consulta)):
+        formas = set(variantes(t))
+        for s in sinonimos_de(t):
+            formas |= variantes(s)
+        f = frozenset(formas)
+        if f and f not in conceptos:
+            conceptos.append(f)
+    return conceptos
+
+
 def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
-    q = set(_tokens(consulta))
-    if not q:
+    conceptos = _conceptos(consulta)
+    if not conceptos:
         return []
     resultados: list[dict] = []
     for path, ops in (spec.get("paths") or {}).items():
@@ -100,7 +124,12 @@ def buscar_endpoints(spec: dict, consulta: str, limite: int = 8) -> list[dict]:
             continue
         texto = " ".join([path] + tags + resumenes + opids)
         palabras = set(_tokens(texto))
-        coincidencias = len(q & palabras)
+        # El endpoint se indexa tambien por las formas singular/plural de cada
+        # palabra, para que la consulta lo alcance venga como venga.
+        formas_doc: set[str] = set()
+        for w in palabras:
+            formas_doc |= variantes(w)
+        coincidencias = sum(1 for c in conceptos if c & formas_doc)
         if coincidencias:
             # Al termino base (cuantas palabras de la consulta aparecen) se le
             # suma la precision: que proporcion del endpoint explica la
