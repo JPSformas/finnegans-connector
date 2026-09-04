@@ -73,7 +73,11 @@ Antes de empezar, confirmá que tenés:
   ```
 - [ ] Instalador de [Python 3.10+](https://www.python.org/downloads/) (marcar **"Add python.exe to PATH"**)
 - [ ] Instalador de [Claude Desktop](https://claude.ai/download)
-- [ ] Carpeta del proyecto (zip o copia de red)
+- [ ] Instalador de [Git para Windows](https://git-scm.com/download/win) (dejá las opciones por defecto)
+- [ ] **Clave de lectura de la documentación** (`FINNEGANS_SWAGGER_KEY`)
+  ```
+  Sin esta variable, buscar_api / ver_api / preparar_cambio no funcionan.
+  ```
 
 ---
 
@@ -111,28 +115,34 @@ Ejemplo de salida: `C:\Users\Juan\AppData\Local\Python\pythoncore-3.14-64\python
 
 
 
-### Paso 2 — Copiar el proyecto a la PC
+### Paso 2 — Clonar el proyecto en la PC
 
-Creá una carpeta fija. **Recomendado:** `C:\FinnegansAgent` (sin espacios en la ruta).
+Clonalo con Git. **No lo copies a mano ni lo bajes como ZIP:** un clon deja la
+carpeta preparada para actualizarse después con un solo paso
+(`scripts\actualizar.bat`), sin volver a pasar por la PC del líder.
+
+**Recomendado:** `C:\FinnegansAgent` (sin espacios en la ruta).
 
 ```powershell
-# Si tenés el proyecto en otra ubicación, ajustá ORIGEN
-$Origen  = "C:\finnegans-connector-master\finnegans-connector-master"   # o la ruta del zip descomprimido
-$Destino = "C:\FinnegansAgent"
-
-New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-Copy-Item -Path "$Origen\*" -Destination $Destino -Recurse -Force
-Set-Location $Destino
+git clone https://github.com/JPSformas/finnegans-connector.git C:\FinnegansAgent
+Set-Location C:\FinnegansAgent
 Get-ChildItem
 ```
 
-**Resultado esperado:** debés ver `server.py`, `finnegans\`, `requirements.txt`, `.env.example`, `verify_setup.py`, etc.
+**Resultado esperado:** debés ver `server.py`, `finnegans\`, `requirements.txt`, `.env.example`, `verify_setup.py`, `scripts\`, etc.
 
 ```powershell
 Test-Path "C:\FinnegansAgent\server.py"
+Test-Path "C:\FinnegansAgent\.git"
 ```
 
-Debe devolver `True`.
+Ambos deben devolver `True`. El segundo es el que habilita la actualización
+en un paso.
+
+> **Instalaciones viejas.** Las hechas con el instructivo anterior (copiar
+> un ZIP descomprimido) no tienen carpeta `.git`. Siguen funcionando, y
+> `scripts\actualizar.bat` las actualiza igual bajando el ZIP del repo. No
+> hace falta reinstalarlas.
 
 ---
 
@@ -422,6 +432,38 @@ python cli.py get producto --id CODIGO_REAL
 ```
 
 Si la CLI funciona pero Claude no, el problema está en `claude_desktop_config.json` (Paso 6).
+
+---
+
+## Actualizar una PC ya instalada
+
+Pensado para cuando IT **no tiene acceso** a la máquina del líder.
+
+Mandale `scripts\actualizar.bat` por mail o chat. El líder lo guarda en
+cualquier carpeta (Descargas sirve) y hace doble clic. El script:
+
+1. Se ubica solo: lee la carpeta de instalación y el intérprete de Python
+   desde `claude_desktop_config.json`, probando primero la ruta MSIX (Claude
+   instalado desde la Store) y después la de `%APPDATA%`.
+2. Trae la versión nueva: `git pull` si la carpeta es un clon, o bajando el
+   ZIP del repo si se instaló copiando la carpeta. El ZIP no incluye `.env`,
+   `audit/` ni `exports/` porque están en `.gitignore`, así que copiar encima
+   no toca las credenciales ni el historial de auditoría.
+3. Completa `FINNEGANS_SWAGGER_KEY` en el `.env` si falta.
+4. Reinstala dependencias con el intérprete correcto.
+5. Verifica contra `swaggerGlobal` que la versión nueva realmente busca.
+6. Reinicia Claude Desktop. **Cerrar la ventana no alcanza:** el server MCP
+   es un proceso hijo que sobrevive; hay que salir desde la bandeja del
+   sistema, y eso es lo que el script hace por él.
+
+Los detalles técnicos van a `actualizacion-error.txt` en la carpeta de
+instalación, no a la pantalla: cada mensaje de error le dice al líder qué
+archivo mandarle a IT.
+
+**Antes de enviarlo**, si el `.env` del líder puede no tener la swagger key,
+completá la variable `CLAVE_DOC` en las primeras líneas del `.bat`. Si la
+dejás vacía y falta la clave, el script corta con un mensaje claro sin dejar
+nada a medias.
 
 ---
 
