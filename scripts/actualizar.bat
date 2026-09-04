@@ -48,16 +48,8 @@ if exist "%LOG%" del "%LOG%" >nul 2>&1
 
 rem --- 2. Traer la version nueva -------------------------------------
 echo   [2/6] Descargando la version nueva...
-where git >nul 2>&1
-if errorlevel 1 goto :err_sin_git
-if not exist "%DIR%\.git" goto :err_sin_git_repo
-
-git -C "%DIR%" fetch origin --quiet 2>>"%LOG%"
-if errorlevel 1 goto :err_red
-git -C "%DIR%" checkout master --quiet 2>>"%LOG%"
-if errorlevel 1 goto :err_cambios_locales
-git -C "%DIR%" pull --ff-only origin master --quiet 2>>"%LOG%"
-if errorlevel 1 goto :err_cambios_locales
+call :actualizar_codigo
+if errorlevel 1 goto :err_descarga
 echo         Codigo actualizado.
 echo.
 
@@ -129,7 +121,8 @@ rem ================== Mensajes de error ==============================
 echo.
 echo   NO PUDE SEGUIR
 echo   No encontre la configuracion de Claude en esta PC.
-echo   Avisale a IT: falta %APPDATA%\Claude\claude_desktop_config.json
+echo   Avisale a IT: no existe claude_desktop_config.json ni en la ruta del
+echo   paquete (LOCALAPPDATA\Packages\Claude_*) ni en %APPDATA%\Claude.
 goto :fin
 
 :err_sin_entrada
@@ -140,32 +133,12 @@ echo   Avisale a IT: falta la entrada "finnegans-agent" en la config,
 echo   o la carpeta se movio de lugar.
 goto :fin
 
-:err_sin_git
+:err_descarga
 echo.
 echo   NO PUDE SEGUIR
-echo   Falta el programa Git en esta PC.
-echo   Avisale a IT: hay que instalar Git para poder actualizar.
-goto :fin
-
-:err_sin_git_repo
-echo.
-echo   NO PUDE SEGUIR
-echo   La carpeta del asistente se copio a mano, no se puede actualizar sola.
-echo   Avisale a IT: la instalacion no tiene repositorio git.
-goto :fin
-
-:err_red
-echo.
-echo   NO PUDE SEGUIR
-echo   No pude conectarme a internet para descargar la version nueva.
-echo   Revisa tu conexion y volve a intentar.
-goto :fin
-
-:err_cambios_locales
-echo.
-echo   NO PUDE SEGUIR
-echo   La carpeta tiene cambios que bloquean la actualizacion.
-echo   Mandale a IT este archivo:
+echo   No pude descargar la version nueva. Puede ser tu conexion a internet.
+echo   Revisala y volve a intentar; si sigue fallando, mandale a IT
+echo   este archivo:
 echo      %LOG%
 goto :fin
 
@@ -207,3 +180,29 @@ goto :fin
 echo.
 pause
 endlocal
+exit /b
+
+rem ================== Actualizacion del codigo =======================
+rem Dos caminos, segun como se instalo:
+rem   - con git (hay carpeta .git): pull de master.
+rem   - copiando la carpeta, que es lo que indica el README: se baja el ZIP
+rem     del repo publico. El ZIP no incluye .env, audit/ ni exports/ porque
+rem     estan en .gitignore, asi que copiar encima no puede tocar las
+rem     credenciales ni el historial de auditoria del lider.
+
+:actualizar_codigo
+if not exist "%DIR%\.git" goto :actualizar_por_zip
+where git >nul 2>&1
+if errorlevel 1 goto :actualizar_por_zip
+git -C "%DIR%" fetch origin --quiet 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+git -C "%DIR%" checkout master --quiet 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+git -C "%DIR%" pull --ff-only origin master --quiet 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:actualizar_por_zip
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try{ $t=Join-Path $env:TEMP ('fnx_'+[guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory -Path $t -Force); $z=Join-Path $t 'm.zip'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/JPSformas/finnegans-connector/archive/refs/heads/master.zip' -OutFile $z -UseBasicParsing; Expand-Archive -Path $z -DestinationPath $t -Force; $d=@(Get-ChildItem -Path $t -Directory); if($d.Count -lt 1){ exit 1 }; Copy-Item -Path (Join-Path $d[0].FullName '*') -Destination '%DIR%' -Recurse -Force; [IO.Directory]::Delete($t,$true) }catch{ Write-Error $_; exit 1 }" 2>>"%LOG%"
+if errorlevel 1 exit /b 1
+exit /b 0
