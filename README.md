@@ -435,6 +435,35 @@ Si la CLI funciona pero Claude no, el problema está en `claude_desktop_config.j
 
 ---
 
+## Instalar en una PC nueva sin acceso a ella
+
+Si IT no puede llegar a la máquina, `scripts\instalar.bat` hace la
+instalación completa. Requiere que el líder ya tenga **Python 3.10+** y
+**Claude Desktop** instalados (el script corta con un mensaje claro si falta
+alguno).
+
+Se corre **dos veces**, a propósito:
+
+1. **Primera pasada.** Ubica Python y la config de Claude, descarga el
+   código en `%LOCALAPPDATA%\FinnegansAgent`, instala las dependencias, y se
+   detiene pidiendo el `.env`. Abre la carpeta donde hay que pegarlo.
+2. **Segunda pasada.** Detecta el `.env`, completa lo que falte, registra el
+   asistente en Claude, prueba la conexión real contra Finnegans y reinicia
+   Claude.
+
+El `.env` va **por separado**: tiene `FINNEGANS_CLIENT_ID` y
+`FINNEGANS_CLIENT_SECRET`, que son credenciales de producción y no pueden
+viajar dentro de un `.bat`. Se puede reusar el mismo `.env` de otra PC con
+una salvedad: **`FINNEGANS_OPERATOR` identifica a quién la auditoría le
+atribuye cada cambio**, así que no debe quedar con el nombre de otra persona
+ni con el valor de ejemplo. El instalador lo pregunta y lo escribe él mismo
+si detecta que falta o sigue en el ejemplo.
+
+La entrada en `claude_desktop_config.json` se **agrega sin pisar** lo que ya
+haya: si la PC tiene otros MCP configurados, quedan intactos.
+
+---
+
 ## Actualizar una PC ya instalada
 
 Pensado para cuando IT **no tiene acceso** a la máquina del líder.
