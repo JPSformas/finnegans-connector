@@ -101,7 +101,10 @@ echo.
 
 rem --- 5. El archivo .env ---------------------------------------------
 echo   [5/7] Revisando las credenciales...
+call :rescatar_env
 if not exist "%DESTINO%\.env" goto :falta_env
+call :revisar_env
+if errorlevel 1 goto :fin
 call :completar_env
 if errorlevel 1 goto :err_env
 echo.
@@ -327,6 +330,76 @@ xcopy "%RAIZ%\*" "%DESTINO%\" /e /y /q >nul 2>nul
 if errorlevel 1 exit /b 1
 rd /s /q "%TMPZ%" >nul 2>&1
 exit /b 0
+
+rem Windows esconde las extensiones, asi que un archivo guardado como
+rem ".env.txt" se ve igual que ".env". Es el error mas comun al pegar el
+rem archivo, y deja al instalador leyendo el .env viejo (o ninguno). Si el
+rem .env no esta, se usa la variante que si este.
+
+:rescatar_env
+if exist "%DESTINO%\.env" exit /b 0
+for %%f in (".env.txt" "env.txt" "env" ".env.text") do (
+  if exist "%DESTINO%\%%~f" (
+    copy /y "%DESTINO%\%%~f" "%DESTINO%\.env" >nul 2>&1
+    echo         Encontre el archivo como %%~f y lo renombre a .env
+    exit /b 0
+  )
+)
+exit /b 0
+
+rem Valida el .env con la misma funcion que usa verify_setup.py, y muestra
+rem en pantalla exactamente que esta mal. Antes solo decia "llego dañado"
+rem sin mostrar el valor leido, y eso no alcanzaba para darse cuenta de que
+rem el archivo revisado no era el que la persona habia editado.
+
+rem Codigos de salida: 0 esta bien, 1 hay problemas, 2 no se pudo revisar
+rem (una version instalada vieja puede no tener validar_env). El caso 2 no
+rem puede bloquear: seria decirle que el archivo esta mal cuando en realidad
+rem no lo revisamos. El paso 7 igual prueba la conexion de verdad.
+:revisar_env
+set "E1=import sys; sys.path.insert(0,r'%DESTINO%');"
+set "E2=try: from verify_setup import validar_env as V"
+set "E3=except Exception: raise SystemExit(2)"
+set "E4=p=r'%DESTINO%\.env'"
+set "E5=try: t=open(p,encoding='utf-8',errors='replace').read()"
+set "E6=except Exception: raise SystemExit(2)"
+set "E7=e=V(t)"
+set "E8=print(chr(10).join('        - '+x for x in e))"
+set "E9=raise SystemExit(1 if e else 0)"
+set "SC=%TEMP%\fnx-revisar-env.py"
+> "%SC%" echo %E1%
+>>"%SC%" echo %E2%
+>>"%SC%" echo %E3%
+>>"%SC%" echo %E4%
+>>"%SC%" echo %E5%
+>>"%SC%" echo %E6%
+>>"%SC%" echo %E7%
+>>"%SC%" echo %E8%
+>>"%SC%" echo %E9%
+"%PY%" "%SC%" 2>>"%LOG%"
+if errorlevel 2 goto :revisar_env_nose
+if errorlevel 1 goto :revisar_env_mal
+echo         Credenciales verificadas.
+exit /b 0
+
+:revisar_env_nose
+echo         No pude revisar el archivo; sigo y lo pruebo mas adelante.
+exit /b 0
+
+:revisar_env_mal
+echo.
+echo   EL ARCHIVO .env NO ESTA COMPLETO
+echo.
+echo   Lo lei en esta ruta:
+echo      %DESTINO%\.env
+echo.
+echo   Si el archivo que editaste no es ese, fijate que Windows esconde
+echo   las extensiones: puede haber quedado como .env.txt
+echo.
+echo   Pedile a IT que te lo mande COMO ARCHIVO ADJUNTO (no pegado en el
+echo   cuerpo del mail), guardalo en esa carpeta reemplazando el que
+echo   esta, y volve a ejecutar este instalador.
+exit /b 1
 
 rem Completa lo que el .env que manda IT no puede traer:
 rem   - FINNEGANS_OPERATOR: quien opera esta PC. Es lo que la auditoria
