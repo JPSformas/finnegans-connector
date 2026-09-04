@@ -102,6 +102,20 @@ echo.
 rem --- 5. El archivo .env ---------------------------------------------
 echo   [5/7] Revisando las credenciales...
 if not exist "%DESTINO%\.env" goto :falta_env
+rem El .env viaja por mail y puede llegar dañado: si se copia como texto,
+rem el "https://" de la URL base suele perder los dos puntos y las barras.
+rem Se detecta aca para dar un mensaje entendible en vez de un traceback.
+rem Se exige el "://" completo: buscar solo "http" daria por buena la
+rem linea dañada, porque "httpsapi.finneg.com" tambien empieza con http.
+set "URLOK="
+findstr /b /c:"FINNEGANS_BASE_URL=https://" "%DESTINO%\.env" >nul 2>&1
+if not errorlevel 1 set "URLOK=1"
+findstr /b /c:"FINNEGANS_BASE_URL=http://" "%DESTINO%\.env" >nul 2>&1
+if not errorlevel 1 set "URLOK=1"
+if not defined URLOK (
+  findstr /b /r /c:"FINNEGANS_BASE_URL=..*" "%DESTINO%\.env" >nul 2>&1
+  if not errorlevel 1 goto :err_env_roto
+)
 call :completar_env
 if errorlevel 1 goto :err_env
 echo.
@@ -244,6 +258,21 @@ echo   NO PUDE SEGUIR
 echo   No pude registrar el asistente en la configuracion de Claude.
 echo   Mandale a IT este archivo:
 echo      %LOG%
+goto :fin
+
+:err_env_roto
+echo.
+echo   EL ARCHIVO .env LLEGO DAÑADO
+echo.
+echo   La linea FINNEGANS_BASE_URL tiene que decir exactamente:
+echo.
+echo         FINNEGANS_BASE_URL=https://api.finneg.com
+echo.
+echo   y en tu archivo perdio los dos puntos y las barras. Pasa cuando
+echo   el archivo se copia y pega como texto en vez de adjuntarse.
+echo.
+echo   Pedile a IT que te lo mande de nuevo COMO ARCHIVO ADJUNTO,
+echo   pegalo en la carpeta, y volve a ejecutar este instalador.
 goto :fin
 
 :err_prueba

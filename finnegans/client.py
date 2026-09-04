@@ -53,23 +53,56 @@ class FinnegansClient:
         self._token_ts: float = 0.0
 
     # ---------------------------------------------------------------- auth
-    def _fetch_token(self) -> str:
+    def _redactar(self, texto: object) -> str:
+        """Enmascara el client_id y el client_secret en cualquier texto.
+
+        El token se pide con las credenciales en el query string, asi que sin
+        esto la URL completa termina en los mensajes de error, en el log de la
+        instalacion y en cualquier traceback que el usuario reenvie.
+        """
+        salida = str(texto)
+        # getattr por si el objeto de settings no define todo: esto corre en
+        # el camino de error y no puede fallar justo ahi.
+        secretos = (
+            getattr(self.settings, "client_secret", None),
+            getattr(self.settings, "client_id", None),
+            getattr(self, "_token", None),
+        )
+        for valor in secretos:
+            if valor:
+                salida = salida.replace(str(valor), "***")
+        return salida
+
+    def _url_token(self) -> str:
+        base = (self.settings.base_url or "").strip()
+        if not base.lower().startswith(("http://", "https://")):
+            raise FinnegansAuthError(
+                "FINNEGANS_BASE_URL no es una direccion valida: tiene que "
+                f"empezar con https:// y llego como {base!r}. Revisa esa "
+                "linea del .env (el valor correcto es https://api.finneg.com)."
+            )
         params = {
             "grant_type": "client_credentials",
             "client_id": self.settings.client_id,
             "client_secret": self.settings.client_secret,
         }
-        url = f"{self.settings.base_url}/api/oauth/token?" + urllib.parse.urlencode(params)
+        return f"{base}/api/oauth/token?" + urllib.parse.urlencode(params)
+
+    def _fetch_token(self) -> str:
+        url = self._url_token()
         try:
             with urllib.request.urlopen(url, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace").strip()
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
+            body = e.read().decode("utf-8", errors="replace") if e.fp else ""
             raise FinnegansAuthError(
-                f"Fallo la autenticacion (HTTP {e.code}). Revisa client_id/client_secret. Detalle: {body[:300]}"
+                f"Fallo la autenticacion (HTTP {e.code}). Revisa client_id/"
+                f"client_secret. Detalle: {self._redactar(body[:300])}"
             ) from e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise FinnegansAuthError(f"No se pudo conectar a Finnegans: {e}") from e
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise FinnegansAuthError(
+                f"No se pudo conectar a Finnegans: {self._redactar(e)}"
+            ) from e
 
         # El endpoint puede devolver el token en texto plano o en JSON.
         token = raw
@@ -133,7 +166,14 @@ class FinnegansClient:
         path = f"/api/{endpoint}"
         if id is not None:
             path += f"/{urllib.parse.quote(str(id))}"
-        url = f"{self.settings.base_url}{path}?" + urllib.parse.urlencode(query)
+        base = (self.settings.base_url or "").strip()
+        if not base.lower().startswith(("http://", "https://")):
+            raise FinnegansError(
+                "FINNEGANS_BASE_URL no es una direccion valida: tiene que "
+                f"empezar con https:// y llego como {base!r}. Revisa esa "
+                "linea del .env (el valor correcto es https://api.finneg.com)."
+            )
+        url = f"{base}{path}?" + urllib.parse.urlencode(query)
 
         headers = {"Accept": "application/json"}
         data = None
@@ -154,10 +194,13 @@ class FinnegansClient:
                     method, endpoint, id=id, params=params, body=body, _retry_on_auth=False
                 )
             raise FinnegansError(
-                f"Error en {method} {endpoint} (HTTP {e.code}): {err_body[:400]}"
+                f"Error en {method} {endpoint} (HTTP {e.code}): "
+                f"{self._redactar(err_body[:400])}"
             ) from e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise FinnegansError(f"No se pudo conectar a Finnegans ({endpoint}): {e}") from e
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+            raise FinnegansError(
+                f"No se pudo conectar a Finnegans ({endpoint}): {self._redactar(e)}"
+            ) from e
 
     def get(
         self,
