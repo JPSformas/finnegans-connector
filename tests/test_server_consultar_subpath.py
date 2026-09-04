@@ -15,6 +15,13 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/cliente/list"):
             body = json.dumps([{"codigo": "P01093", "nombre": "FORMAS PUBLICITARIAS S.A."}])
             self.send_response(200)
+        elif self.path.startswith("/api/movimientoFondos/list"):
+            # Finnegans no expone /list para transacciones (respuesta real).
+            body = json.dumps({
+                "error": "Method Not Allowed: No se puede hacer list sobre una transaccion",
+                "status": 405,
+            })
+            self.send_response(405)
         elif self.path.startswith("/api/cliente?") or self.path == "/api/cliente":
             body = json.dumps({"error": "Bad Request: id missing", "status": 400})
             self.send_response(400)
@@ -52,3 +59,14 @@ class TestConsultarSubpath(unittest.TestCase):
         out = server.consultar_finnegans("cliente")
         self.assertIn("/list", out)  # sugiere usar la operacion de listado
         self.assertNotIn("id missing", out.lower())
+
+    def test_list_sobre_transaccion_deriva_al_reporte(self):
+        out = server.consultar_finnegans("movimientoFondos/list")
+        self.assertIn("reports/DETALLETRANSACCIONES", out)
+        self.assertIn("PARAM_Categoria", out)
+
+    def test_list_sobre_transaccion_no_muestra_el_error_crudo(self):
+        out = server.consultar_finnegans("movimientoFondos/list")
+        self.assertNotIn("405", out)
+        self.assertNotIn("Method Not Allowed", out)
+        self.assertNotIn("Error en consulta", out)

@@ -33,6 +33,7 @@ from finnegans import FinnegansClient, FinnegansError
 from finnegans import swagger_catalog
 from finnegans.config import Settings
 from finnegans.audit import AuditLog
+from finnegans.errores import traducir_error
 from finnegans.discovery import (
     DiscoveryError, search_apis,
 )
@@ -201,14 +202,7 @@ def consultar_finnegans(
         data = get_client().request(metodo, api_id, id=id, params=parametros)
         return _truncate(data)
     except FinnegansError as e:
-        msg = str(e)
-        if "id missing" in msg.lower():
-            return (
-                f"El endpoint '{api_id}' requiere un codigo en el path "
-                f"(ej. '{api_id}/CODIGO'), o usa la operacion de listado "
-                f"'{api_id}/list'."
-            )
-        return f"Error en consulta: {msg}"
+        return traducir_error(api_id, str(e), id=id)
 
 
 @mcp.tool()
@@ -304,10 +298,15 @@ def ejecutar_cambio(confirmacion_id: str, codigo_confirmacion: str) -> str:
             params=pending.parametros, body=pending.body,
         )
     except FinnegansError as e:
+        # La auditoria guarda el detalle crudo para IT; al usuario le llega
+        # el mensaje traducido.
         audit.record("error", metodo=pending.metodo, api_id=pending.api_id,
                      resource_id=pending.resource_id, confirmacion_id=confirmacion_id,
                      codigo_ok=True, resultado="error_api", detalle=str(e))
-        return f"Error al ejecutar: {e}"
+        return (
+            "El cambio NO se aplico.\n"
+            + traducir_error(pending.api_id, str(e), id=pending.resource_id)
+        )
 
     # Read-back (verificacion posterior)
     rid_efectivo, verificacion = _read_back(pending, data)
