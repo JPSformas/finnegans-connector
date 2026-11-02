@@ -32,3 +32,7 @@ tests/
 docs/
 .github/
 scripts/
+
+# Solo desarrollo y herramientas locales
+.superpowers/
+.claude/

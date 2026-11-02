@@ -31,8 +31,8 @@ from finnegans_core.presupuesto import RESPUESTA_MAX_CHARS, nombre_tabla, resumi
 from finnegans_core.secretos import Redactor
 from finnegans_core.workspace import ConsultaInvalida, Resumen, Workspace
 
-from .escritura import armar_body, diff
-from .instrucciones import INSTRUCCIONES
+from finnegans_mcp.escritura import armar_body, diff
+from finnegans_mcp.instrucciones import INSTRUCCIONES
 
 METODOS_ESCRITURA = ("POST", "PUT", "PATCH", "DELETE")
 
