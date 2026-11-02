@@ -115,6 +115,15 @@ def _es_listado(path: str) -> bool:
     return p == "list" or p.endswith("/list") or p == "reports" or p.startswith("reports/")
 
 
+def _codigo_de(registro: dict | None) -> Any:
+    """Valor del codigo del registro: hay definiciones con 'Codigo' y con 'codigo'."""
+    if not isinstance(registro, dict):
+        return None
+    if "Codigo" in registro:
+        return registro["Codigo"]
+    return next((v for k, v in registro.items() if str(k).lower() == "codigo"), None)
+
+
 def _mismo_codigo(a: Any, b: Any) -> bool:
     return str(a).strip().casefold() == str(b).strip().casefold()
 
@@ -685,14 +694,14 @@ def crear_servidor(
                 objetivo = partes[-1]
         if objetivo is None:
             return None
-        cod_base = (antes or {}).get("Codigo")
+        cod_base = _codigo_de(antes)
         if base is not None and cod_base not in (None, "") and not _mismo_codigo(cod_base, objetivo):
             return (
                 f"La base '{base}' es el registro {cod_base}, pero la escritura va al "
                 f"registro {objetivo}. No mezclo registros: para modificar {objetivo}, "
                 f"cargalo con leer(path, id='{objetivo}') y usá esa tabla como base."
             )
-        cod_body = enviado.get("Codigo")
+        cod_body = _codigo_de(enviado)
         if cod_body not in (None, "") and not _mismo_codigo(cod_body, objetivo):
             return (
                 f"El body tiene Codigo '{cod_body}' pero la escritura va al registro "
@@ -788,7 +797,8 @@ def crear_servidor(
             if problema:
                 return responder(problema + " No se envió nada a Finnegans.")
 
-        codigo = id or (str(enviado.get("Codigo")) if enviado.get("Codigo") else None)
+        cod_enviado = _codigo_de(enviado)
+        codigo = id or (str(cod_enviado) if cod_enviado not in (None, "") else None)
         ruta_lectura = path.strip("/")
         if id is None and codigo and ruta_lectura.endswith("/" + codigo):
             ruta_lectura = ruta_lectura[: -len(codigo) - 1]

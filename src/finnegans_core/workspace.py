@@ -45,14 +45,6 @@ def _q(nombre: str) -> str:
     return '"' + nombre.replace('"', '""') + '"'
 
 
-def _msg(e: Exception) -> str:
-    """Mensaje de DuckDB acotado: es util para Claude pero no debe inundar."""
-    t = str(e)
-    if len(t) > _ERROR_MAX_CHARS:
-        t = t[:_ERROR_MAX_CHARS] + "… (mensaje cortado)"
-    return t
-
-
 def _ruta_sql(ruta: str) -> str:
     return ruta.replace(os.sep, "/").replace("'", "''")
 
@@ -87,6 +79,17 @@ class Workspace:
         reconoce y su primera parte quedaria visible.
         """
         self._redactar = redactar
+
+    def _msg(self, e: Exception) -> str:
+        """Mensaje de DuckDB acotado: es util para Claude pero no debe inundar.
+
+        Se redacta antes de cortar: DuckDB repite valores de las celdas y un
+        secreto partido por el corte ya no se reconoce.
+        """
+        t = self._redactar(str(e))
+        if len(t) > _ERROR_MAX_CHARS:
+            t = t[:_ERROR_MAX_CHARS] + "… (mensaje cortado)"
+        return t
 
     # -- ciclo de vida ----------------------------------------------------
 
@@ -137,7 +140,7 @@ class Workspace:
             except duckdb.Error as e:
                 self._olvidar(tabla)
                 raise ConsultaInvalida(
-                    f"No se pudo cargar '{tabla}' como tabla: {_msg(e)}"
+                    f"No se pudo cargar '{tabla}' como tabla: {self._msg(e)}"
                 ) from e
         finally:
             try:
@@ -150,7 +153,7 @@ class Workspace:
         except duckdb.Error as e:
             self._olvidar(tabla)
             raise ConsultaInvalida(
-                f"Se cargó '{tabla}' pero no se pudo resumir: {_msg(e)}"
+                f"Se cargó '{tabla}' pero no se pudo resumir: {self._msg(e)}"
             ) from e
         self._crudos[tabla] = datos
         return resumen
@@ -224,7 +227,7 @@ class Workspace:
         try:
             sentencias = duckdb.extract_statements(sql)
         except duckdb.Error as e:
-            raise ConsultaInvalida(f"SQL inválido: {_msg(e)}") from e
+            raise ConsultaInvalida(f"SQL inválido: {self._msg(e)}") from e
         if len(sentencias) != 1:
             raise ConsultaInvalida(
                 "Mandá exactamente una sentencia SQL por consulta."
@@ -240,7 +243,7 @@ class Workspace:
             columnas = [d[0] for d in cur.description]
             return columnas, cur.fetchall()
         except duckdb.Error as e:
-            raise ConsultaInvalida(f"La consulta falló: {_msg(e)}") from e
+            raise ConsultaInvalida(f"La consulta falló: {self._msg(e)}") from e
 
     def consultar(self, sql: str, desde: int = 0) -> str:
         """Resultado paginado como tabla markdown que cabe en el presupuesto."""

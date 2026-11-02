@@ -356,3 +356,39 @@ def test_redactor_se_aplica_antes_de_cortar_muestra_y_nota():
         assert "SECRETO" not in (r.nota or "")
     finally:
         w.cerrar()
+
+
+SECRETO_WS = "SECRETO-QUE-CRUZA-EL-CORTE"
+
+
+def _ws_con_redactor():
+    w = Workspace()
+    w.usar_redactor(lambda t: t.replace(SECRETO_WS, "***"))
+    return w
+
+
+def test_error_de_consulta_se_redacta_antes_de_cortar():
+    w = _ws_con_redactor()
+    try:
+        w.cargar("tc", [{"a": "x" * 1440 + SECRETO_WS}])
+        with pytest.raises(ConsultaInvalida) as exc:
+            w.consultar("SELECT CAST(a AS INTEGER) FROM tc")
+        assert "SECRETO-Q" not in str(exc.value)
+    finally:
+        w.cerrar()
+
+
+def test_error_de_carga_se_redacta_antes_de_cortar(monkeypatch):
+    import duckdb
+
+    def boom(self, tabla):
+        raise duckdb.InvalidInputException("y" * 1490 + SECRETO_WS)
+
+    w = _ws_con_redactor()
+    try:
+        monkeypatch.setattr(Workspace, "_resumen", boom)
+        with pytest.raises(ConsultaInvalida) as exc:
+            w.cargar("t", [{"a": 1}])
+        assert "SECRETO-Q" not in str(exc.value)
+    finally:
+        w.cerrar()

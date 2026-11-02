@@ -719,3 +719,15 @@ async def test_leer_muestra_y_nota_redactan_antes_de_cortar(armar):
     env = armar(lambda *a: "x" * 490 + CLIENT_SECRET + "y" * 9000)
     out = await env.llamar("leer", path="texto")
     assert prefijo not in out
+
+
+async def test_codigo_en_minusculas_tambien_se_compara(armar):
+    env = armar(lambda *a: {"codigo": "P01093", "Nombre": "A"})
+    await env.llamar("leer", path="cliente", id="P01093")
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="P99999",
+                           base="cliente_p01093", cambios={"Nombre": "x"})
+    assert "No se envió nada" in out and "P01093" in out
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="B",
+                           body={"CODIGO": "A"})
+    assert "No se envió nada" in out
+    assert [c.metodo for c in env.cliente.llamadas] == ["GET"]
