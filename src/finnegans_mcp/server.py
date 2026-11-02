@@ -13,7 +13,7 @@ import logging
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import anyio.to_thread
 from mcp.server import MCPServer
@@ -22,7 +22,7 @@ from mcp_types import ToolAnnotations
 from finnegans_core.catalogo.busqueda import buscar_endpoint, formatear_busqueda
 from finnegans_core.catalogo.docs_mcp import DocsMcp, DocsMcpError
 from finnegans_core.catalogo.swagger import Operacion, SwaggerCatalog, SwaggerError
-from finnegans_core.client import FinnegansClient, FinnegansError
+from finnegans_core.client import FinnegansAuthError, FinnegansClient, FinnegansError
 from finnegans_core.config import Settings
 from finnegans_core.errores import traducir_error
 from finnegans_core.exportar import exportar as exportar_archivo
@@ -47,6 +47,10 @@ _DESCRIPCION_MAX = 100
 _RESPUESTA_API_MAX = 300
 # Reserva para encabezados y pies alrededor de un listado.
 _RESERVA = 600
+# Por operacion, al achicar ver_endpoint: rotulos y aviso de lo que falta.
+_RESERVA_OPERACION = 60
+# Debajo de esto por operacion no se achica: se lista compacto.
+_MIN_POR_OPERACION = 500
 # Loggers HTTP que en INFO escriben la URL completa: el token se pide con
 # client_id/client_secret en el query string y el swagger lleva su key ahi.
 # Claude Desktop guarda el stderr del servidor en su log.
@@ -76,10 +80,61 @@ def _a_json(datos: Any) -> str:
     return json.dumps(datos, ensure_ascii=False, default=str)
 
 
-def _mensaje_error(e: BaseException, api_id: str = "", id: str | None = None) -> str:
-    """Texto en castellano para cualquier error del core (aun sin redactar)."""
+Limpiar = Callable[[object], str]
+
+
+def _texto(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (dict, list, tuple)):
+        return _a_json(v)
+    return str(v)
+
+
+def _corto(limpiar: Limpiar, v: Any, max_len: int) -> str:
+    """Redacta y despues corta: un secreto partido por el corte ya no se reconoce."""
+    return resumir_valor(limpiar(_texto(v)), max_len)
+
+
+def _redactar_valores(limpiar: Limpiar, v: Any) -> Any:
+    """Copia con cada string redactado (para el diff, que corta valores)."""
+    if isinstance(v, dict):
+        return {k: _redactar_valores(limpiar, x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_redactar_valores(limpiar, x) for x in v]
+    if isinstance(v, str):
+        return limpiar(v)
+    return v
+
+
+def _es_listado(path: str) -> bool:
+    """True si el path devuelve filas resumidas (un /list o un reporte), no un registro."""
+    p = (path or "").strip("/").lower()
+    return p == "list" or p.endswith("/list") or p == "reports" or p.startswith("reports/")
+
+
+def _mismo_codigo(a: Any, b: Any) -> bool:
+    return str(a).strip().casefold() == str(b).strip().casefold()
+
+
+def _es_corte_de_conexion(e: BaseException) -> bool:
+    """Error de transporte (timeout, conexion cortada): la API no llego a contestar."""
+    return (
+        isinstance(e, FinnegansError)
+        and not isinstance(e, FinnegansAuthError)
+        and "no se pudo conectar" in str(e).lower()
+    )
+
+
+def _mensaje_error(
+    e: BaseException, limpiar: Limpiar, api_id: str = "", id: str | None = None
+) -> str:
+    """Texto en castellano para cualquier error del core (redactar otra vez al salir)."""
     if isinstance(e, FinnegansError):
-        return traducir_error(api_id, str(e), id)
+        # Se redacta antes: traducir_error corta el detalle tecnico.
+        return traducir_error(api_id, limpiar(str(e)), id)
     if isinstance(e, (SwaggerError, DocsMcpError, ConsultaInvalida, ValueError)):
         return str(e)
     if isinstance(e, TypeError):
@@ -92,42 +147,79 @@ def _mensaje_error(e: BaseException, api_id: str = "", id: str | None = None) ->
     )
 
 
-def _formatear_parametro(p: dict) -> str:
+def _formatear_parametro(limpiar: Limpiar, p: dict) -> str:
     partes = [p.get("nombre") or "?"]
     extra = [x for x in (p.get("ubicacion"), "requerido" if p.get("requerido") else None) if x]
     if extra:
         partes.append(f"({', '.join(extra)})")
     texto = " ".join(partes)
     if p.get("descripcion"):
-        texto += f": {resumir_valor(p['descripcion'], _DESCRIPCION_MAX)}"
+        texto += f": {_corto(limpiar, p['descripcion'], _DESCRIPCION_MAX)}"
     return texto
 
 
-def _formatear_operacion(o: Operacion) -> str:
+def _llenar(items: list[str], disponible: int, sep: str) -> list[str]:
+    """Los primeros items que entran en `disponible` caracteres."""
+    salida: list[str] = []
+    usado = 0
+    for item in items:
+        if usado + len(item) + len(sep) > disponible:
+            break
+        salida.append(item)
+        usado += len(item) + len(sep)
+    return salida
+
+
+def _formatear_operacion(
+    limpiar: Limpiar, o: Operacion, max_chars: int | None = None, como_ver_todo: str = ""
+) -> str:
+    """Una operacion. Con max_chars se achica: parametros primero, despues los
+    campos requeridos del body y al final el resto, diciendo cuantos faltan."""
     linea = f"{o.metodo} {o.path} [{o.tipo}]"
     if o.resumen:
-        linea += f" — {resumir_valor(o.resumen, _DESCRIPCION_MAX)}"
+        linea += f" — {_corto(limpiar, o.resumen, _DESCRIPCION_MAX)}"
     lineas = [linea]
-    if o.parametros:
-        lineas.append("  Parámetros: " + "; ".join(_formatear_parametro(p) for p in o.parametros))
+    params = [_formatear_parametro(limpiar, p) for p in o.parametros]
+    requeridos = set(o.body_requeridos)
+    campos = [c + "*" for c in o.body_campos if c in requeridos]
+    campos += [c for c in o.body_campos if c not in requeridos]
+    # Reserva para rotulos y para la linea "… y N más (como_ver_todo)".
+    disponible = None if max_chars is None else max_chars - len(linea) - 2 * (
+        _RESERVA_OPERACION + len(como_ver_todo))
+    resto_aviso = f" ({como_ver_todo})" if como_ver_todo else ""
+
+    if params:
+        incluidos = params if disponible is None else _llenar(params, disponible, "; ")
+        texto = "  Parámetros: " + "; ".join(incluidos)
+        if len(incluidos) < len(params):
+            texto += f" … y {len(params) - len(incluidos)} parámetros más{resto_aviso}"
+        if disponible is not None:
+            disponible -= len(texto)
+        lineas.append(texto)
     if o.tiene_body:
         if not o.body_schema_ok:
             lineas.append("  Body: lleva body, pero su schema no está disponible en la documentación.")
-        elif o.body_campos:
-            requeridos = set(o.body_requeridos)
-            campos = ", ".join(c + ("*" if c in requeridos else "") for c in o.body_campos)
-            lineas.append(f"  Body ({len(o.body_campos)} campos, * = requerido): {campos}")
+        elif campos:
+            incluidos = campos if disponible is None else _llenar(campos, max(disponible, 0), ", ")
+            texto = (
+                f"  Body ({len(campos)} campos, * = requerido, primero los requeridos): "
+                + ", ".join(incluidos)
+            )
+            if len(incluidos) < len(campos):
+                texto += f" … y {len(campos) - len(incluidos)} campos más{resto_aviso}"
+            lineas.append(texto)
         else:
             lineas.append("  Body: el schema no declara campos.")
     return "\n".join(lineas)
 
 
-def _formatear_columnas(tabla: str, columnas: list[tuple[str, str]]) -> str:
+def _formatear_columnas(limpiar: Limpiar, tabla: str, columnas: list[tuple[str, str]]) -> str:
     """Columnas con su tipo, acotadas: un STRUCT puede ocupar cientos de KB."""
     partes: list[str] = []
     usado = 0
     tipos_cortados = False
     for nombre, tipo in columnas:
+        tipo = limpiar(tipo)
         if len(tipo) > _TIPO_COLUMNA_MAX:
             tipo = tipo[: _TIPO_COLUMNA_MAX - 1] + "…"
             tipos_cortados = True
@@ -169,6 +261,9 @@ def crear_servidor(
     swagger = swagger if swagger is not None else SwaggerCatalog(settings)
     docs = docs if docs is not None else DocsMcp(settings)
     workspace = workspace if workspace is not None else Workspace()
+    # Path del que salio cada tabla: una fila de un /list o de un reporte no
+    # es el registro completo y no sirve como base de un PUT.
+    origen_tabla: dict[str, str] = {}
     redactor_propio = Redactor(settings.secretos())
     # Las herramientas sincronicas corren en hilos: DuckDB no se comparte en paralelo.
     candado = threading.RLock()
@@ -179,6 +274,14 @@ def crear_servidor(
         if redactor is not None:
             salida = redactor.limpiar(salida)  # conoce tambien el token
         return redactor_propio.limpiar(salida)
+
+    workspace.usar_redactor(limpiar)
+
+    def error(e: BaseException, api_id: str = "", id: str | None = None) -> str:
+        return _mensaje_error(e, limpiar, api_id, id)
+
+    def corto(v: Any, max_len: int) -> str:
+        return _corto(limpiar, v, max_len)
 
     def responder(texto: object, como_seguir: str = "Pedí algo más acotado.") -> str:
         return _ajustar(limpiar(texto), como_seguir)
@@ -207,7 +310,7 @@ def crear_servidor(
             sobran = len(r.filas) - _BUSQUEDA_MAX_FILAS
             r.filas = r.filas[:_BUSQUEDA_MAX_FILAS]
             for f in r.filas:
-                f.resumen = resumir_valor(f.resumen, _RESUMEN_BUSQUEDA_MAX)
+                f.resumen = corto(f.resumen, _RESUMEN_BUSQUEDA_MAX)
             texto = formatear_busqueda(r)
             if sobran > 0:
                 texto += (
@@ -215,34 +318,88 @@ def crear_servidor(
                     "si ninguno sirve, buscá con palabras más específicas.)"
                 )
         except Exception as e:  # noqa: BLE001 - ningun error sale crudo
-            texto = _mensaje_error(e)
+            texto = error(e)
         return responder(texto, "Buscá con palabras más específicas.")
 
     # ---------------------------------------------------------- ver_endpoint
 
-    def _ver_operaciones(path: str) -> str:
+    def _no_encontrado(path: str) -> str:
+        return (
+            f"No encontré '{path}' en la documentación de APIs. Usá buscar_endpoint "
+            "para dar con el nombre correcto."
+        )
+
+    def _filtrar_metodo(path: str, ops: list[Operacion], metodo: str | None):
+        """(ops del metodo pedido, None) o ([], mensaje) si no lo tiene."""
+        if not metodo:
+            return ops, None
+        m = metodo.strip().upper()
+        elegidas = [o for o in ops if o.metodo == m]
+        if elegidas:
+            return elegidas, None
+        tiene = ", ".join(dict.fromkeys(o.metodo for o in ops))
+        return [], f"'{path}' no tiene la operación {m}. Tiene: {tiene}."
+
+    def _ver_operaciones(path: str, metodo: str | None) -> str:
         ops = swagger.ver(path)
         if not ops:
-            return (
-                f"No encontré '{path}' en la documentación de APIs. Usá buscar_endpoint "
-                "para dar con el nombre correcto."
-            )
+            return _no_encontrado(path)
+        ops, problema = _filtrar_metodo(path, ops, metodo)
+        if problema:
+            return problema
         pie = ""
         if any(o.body_campos for o in ops):
             pie = (
                 "\n\nLos campos anidados (listas como ...Items u objetos) se muestran "
-                "solo por nombre; para ver sus subcampos: ver_endpoint(path, campo=...)."
+                "solo por nombre; para ver sus subcampos: "
+                "ver_endpoint(path, campo=..., metodo=...)."
             )
-        detalle = "\n\n".join(_formatear_operacion(o) for o in ops) + pie
+        detalle = "\n\n".join(_formatear_operacion(limpiar, o) for o in ops) + pie
         if len(detalle) <= RESPUESTA_MAX_CHARS:
             return detalle
-        # No entra el detalle: lista compacta de operaciones y como acotar.
+
+        def como_ver_todo(o: Operacion) -> str:
+            # Nunca proponer una llamada que daria lo mismo: con una sola
+            # operacion ya tiene todo el espacio.
+            if len(ops) == 1:
+                return (
+                    "no entran en una respuesta; para un campo puntual: "
+                    "ver_endpoint(path, campo=..., metodo=...)"
+                )
+            return f"para verlos todos: ver_endpoint('{o.path}', metodo='{o.metodo}')"
+
+        total = RESPUESTA_MAX_CHARS - _RESERVA - len(pie)
+        if total // len(ops) >= _MIN_POR_OPERACION:
+            # Pocas operaciones: cada una se achica en vez de desaparecer. Las que
+            # entran enteras usan solo lo suyo; el resto se reparte entre las grandes.
+            enteras = {id(o): len(_formatear_operacion(limpiar, o)) + 2 for o in ops}
+            tope: dict[int, int | None] = {}
+            pendientes = sorted(ops, key=lambda o: enteras[id(o)])
+            restante = total
+            while pendientes:
+                parte = restante // len(pendientes)
+                o = pendientes[0]
+                if enteras[id(o)] <= parte:
+                    tope[id(o)] = None
+                    restante -= enteras[id(o)]
+                    pendientes.pop(0)
+                else:
+                    for o in pendientes:
+                        tope[id(o)] = parte - 2
+                    break
+            return "\n\n".join(
+                _formatear_operacion(limpiar, o, tope[id(o)], como_ver_todo(o))
+                if tope[id(o)] is not None else _formatear_operacion(limpiar, o)
+                for o in ops
+            ) + pie
+
+        # Demasiadas operaciones (p. ej. todos los reportes): lista compacta.
         lineas: list[str] = []
         usado = 0
         for o in ops:
             linea = f"- {o.metodo} {o.path} [{o.tipo}]"
             if o.resumen:
-                linea += f" — {resumir_valor(o.resumen, 50)}"
+                linea += f" — {corto(o.resumen, 50)}"
             if usado + len(linea) + 1 > RESPUESTA_MAX_CHARS - _RESERVA:
                 break
             lineas.append(linea)
@@ -254,38 +411,43 @@ def crear_servidor(
         )
         if faltan:
             encabezado += f"Muestro las primeras {len(lineas)} (faltan {faltan}). "
-        encabezado += (
-            "Para ver parámetros y body pedí un path exacto, por ejemplo "
-            f"ver_endpoint('{ops[0].path}'), o usá buscar_endpoint para encontrar el "
-            "que necesitás."
-        )
+        ejemplo = next((o for o in ops if o.path.strip("/") != path.strip("/")), None)
+        if ejemplo is not None:
+            encabezado += (
+                "Para ver parámetros y body pedí un path exacto, por ejemplo "
+                f"ver_endpoint('{ejemplo.path}', metodo='{ejemplo.metodo}'), o "
+            )
+        else:
+            encabezado += "Para acotar, "
+        encabezado += "usá buscar_endpoint para encontrar el que necesitás."
         return encabezado + "\n\n" + "\n".join(lineas)
 
-    def _ver_campo(path: str, campo: str) -> str:
+    def _ver_campo(path: str, campo: str, metodo: str | None) -> str:
         ops = swagger.ver(path)
         if not ops:
-            return (
-                f"No encontré '{path}' en la documentación de APIs. Usá buscar_endpoint "
-                "para dar con el nombre correcto."
-            )
+            return _no_encontrado(path)
+        ops, problema = _filtrar_metodo(path, ops, metodo)
+        if problema:
+            return problema
         con_body = [o.metodo for o in ops if o.tiene_body]
         if not con_body:
-            return f"'{path}' no tiene operaciones con body, así que no tiene el campo '{campo}'."
+            donde = f"{metodo.strip().upper()} '{path}'" if metodo else f"'{path}'"
+            return f"{donde} no tiene body, así que no tiene el campo '{campo}'."
         orden = [m for m in ("PUT", "POST", "PATCH") if m in con_body]
         orden += [m for m in dict.fromkeys(con_body) if m not in orden]
         ultimo: SwaggerError | None = None
-        for metodo in orden:
+        for m in orden:
             try:
-                sub = swagger.campo(path, metodo, campo)
+                sub = swagger.campo(path, m, campo)
             except SwaggerError as e:
                 ultimo = e
                 continue
             if not sub:
                 return (
-                    f"El campo '{campo}' del body de {metodo} '{path}' es un valor simple: "
+                    f"El campo '{campo}' del body de {m} '{path}' es un valor simple: "
                     "no tiene subcampos."
                 )
-            lineas = [f"Subcampos de '{campo}' (body de {metodo} '{path}'):"]
+            lineas = [f"Subcampos de '{campo}' (body de {m} '{path}'):"]
             for nombre, d in sub.items():
                 d = d if isinstance(d, dict) else {}
                 linea = f"- {nombre}"
@@ -295,7 +457,7 @@ def crear_servidor(
                 if tipo in ("object", "array") or "$ref" in d or "properties" in d:
                     linea += " [anidado]"
                 if d.get("description"):
-                    linea += f": {resumir_valor(d['description'], _DESCRIPCION_MAX)}"
+                    linea += f": {corto(d['description'], _DESCRIPCION_MAX)}"
                 lineas.append(linea)
             return "\n".join(lineas)
         return str(ultimo)
@@ -305,8 +467,9 @@ def crear_servidor(
         description=(
             "Muestra las operaciones de un recurso ('cliente') o de un path exacto "
             "('/reports/ACOrdenesCompraPendientes'): método, parámetros (con los "
-            "requeridos marcados) y campos del body. Con campo='ProvinciaItems' "
-            "detalla un campo anidado del body, un nivel."
+            "requeridos marcados) y campos del body (primero los requeridos). "
+            "metodo='PUT' muestra una sola operación con todo el espacio. "
+            "Con campo='ProvinciaItems' detalla un campo anidado del body, un nivel."
         ),
         annotations=ToolAnnotations(
             title="Ver endpoint", read_only_hint=True, idempotent_hint=True,
@@ -314,11 +477,16 @@ def crear_servidor(
         ),
         structured_output=False,
     )
-    def ver_endpoint_tool(path: str, campo: str | None = None) -> str:
+    def ver_endpoint_tool(
+        path: str, campo: str | None = None, metodo: str | None = None
+    ) -> str:
         try:
-            texto = _ver_campo(path, campo) if campo else _ver_operaciones(path)
+            if campo:
+                texto = _ver_campo(path, campo, metodo)
+            else:
+                texto = _ver_operaciones(path, metodo)
         except Exception as e:  # noqa: BLE001
-            texto = _mensaje_error(e, path)
+            texto = error(e, path)
         return responder(texto, "Pedí un path exacto o un campo puntual.")
 
     # ------------------------------------------------------------------ leer
@@ -354,7 +522,7 @@ def crear_servidor(
             f"Cargué la respuesta en la tabla {t}: {filas} fila{'s' if filas != 1 else ''} "
             f"y {len(resumen.columnas)} columnas. No la muestro entera porque no entra "
             "en el chat.",
-            "Columnas: " + _formatear_columnas(t, resumen.columnas),
+            "Columnas: " + _formatear_columnas(limpiar, t, resumen.columnas),
         ]
         if resumen.muestra:
             partes.append(f"Muestra (primeras filas, celdas largas cortadas con …):\n{resumen.muestra}")
@@ -391,14 +559,17 @@ def crear_servidor(
         try:
             datos = client.request("GET", path, id=id, params=params)
         except Exception as e:  # noqa: BLE001
-            return responder(_mensaje_error(e, path, id))
+            return responder(error(e, path, id))
         nombre = nombre_tabla(tabla) if tabla else nombre_tabla(path, id)
         try:
             with candado:
+                origen_tabla.pop(nombre, None)
                 resumen = workspace.cargar(nombre, datos)
+                if resumen.tabla is not None:
+                    origen_tabla[nombre] = path
             texto = _presentar_lectura(datos, resumen)
         except Exception as e:  # noqa: BLE001
-            texto = _mensaje_error(e)
+            texto = error(e)
         return responder(texto, f"Usá consultar sobre la tabla {nombre} para ver el resto.")
 
     # ------------------------------------------------------------- consultar
@@ -424,7 +595,7 @@ def crear_servidor(
         except ConsultaInvalida as e:
             texto = f"{e}\nPara ver qué tablas hay cargadas: consultar(\"SHOW TABLES\")."
         except Exception as e:  # noqa: BLE001
-            texto = _mensaje_error(e)
+            texto = error(e)
         return responder(texto, "Pedí menos columnas o filas, o usá exportar.")
 
     # -------------------------------------------------------------- exportar
@@ -459,7 +630,7 @@ def crear_servidor(
         except ConsultaInvalida as e:
             return responder(f"{e}\nPara ver qué tablas hay cargadas: consultar(\"SHOW TABLES\").")
         except Exception as e:  # noqa: BLE001
-            return responder(_mensaje_error(e))
+            return responder(error(e))
         return responder(
             f"Listo: exporté {len(filas)} fila{'s' if len(filas) != 1 else ''} "
             f"a {ruta}"
@@ -478,6 +649,14 @@ def crear_servidor(
                 "el registro con leer(path, id=CODIGO) y pasá como base el nombre de "
                 "tabla que te devuelva."
             )
+        origen = origen_tabla.get(base)
+        if origen is not None and _es_listado(origen):
+            return None, (
+                f"La tabla '{base}' salió de '{origen}', que es un listado o un reporte: "
+                "sus filas son un resumen, no el registro completo, y un PUT armado sobre "
+                "ellas borraría los demás campos del registro. Cargá el registro con "
+                "leer(path, id=CODIGO) y usá esa tabla como base."
+            )
         if isinstance(crudo, list) and len(crudo) == 1 and isinstance(crudo[0], dict):
             return crudo[0], None
         if isinstance(crudo, dict):
@@ -492,6 +671,35 @@ def crear_servidor(
             f"La tabla '{base}' no contiene un registro (un objeto JSON). Cargá el "
             "registro con leer(path, id=CODIGO) y usá esa tabla como base."
         )
+
+    def _otro_registro(m, path, id, base, antes, enviado) -> str | None:
+        """Mensaje si la base o el body son de otro registro que el que se escribe.
+
+        Finnegans toma el codigo del body, no del path: una base de otro
+        registro copiaria ese registro entero sobre el destino.
+        """
+        objetivo = id
+        if objetivo is None and m in ("PUT", "PATCH"):
+            partes = path.strip("/").split("/")
+            if len(partes) >= 2 and partes[-1].lower() != "list" and "{" not in partes[-1]:
+                objetivo = partes[-1]
+        if objetivo is None:
+            return None
+        cod_base = (antes or {}).get("Codigo")
+        if base is not None and cod_base not in (None, "") and not _mismo_codigo(cod_base, objetivo):
+            return (
+                f"La base '{base}' es el registro {cod_base}, pero la escritura va al "
+                f"registro {objetivo}. No mezclo registros: para modificar {objetivo}, "
+                f"cargalo con leer(path, id='{objetivo}') y usá esa tabla como base."
+            )
+        cod_body = enviado.get("Codigo")
+        if cod_body not in (None, "") and not _mismo_codigo(cod_body, objetivo):
+            return (
+                f"El body tiene Codigo '{cod_body}' pero la escritura va al registro "
+                f"{objetivo}. Finnegans toma el código del body, así que escribiría sobre "
+                "otro registro: usá el mismo código en los dos."
+            )
+        return None
 
     def _tipo_endpoint(path: str) -> str:
         """Tipo del endpoint segun el swagger; prueba el path y luego su recurso."""
@@ -543,7 +751,7 @@ def crear_servidor(
                 )
             else:
                 aviso = "No se envió nada a Finnegans."
-            return responder(f"{aviso}\n{_mensaje_error(e, path, id)}")
+            return responder(f"{aviso}\n{error(e, path, id)}")
 
     def _escribir(estado, metodo, path, id, body, base, cambios, params) -> str:
         m = (metodo or "").strip().upper()
@@ -576,7 +784,14 @@ def crear_servidor(
                     f"Falta el body para {m}: pasá el registro completo en body, o base + "
                     "cambios. No se envió nada a Finnegans."
                 )
+            problema = _otro_registro(m, path, id, base, antes, enviado)
+            if problema:
+                return responder(problema + " No se envió nada a Finnegans.")
 
+        codigo = id or (str(enviado.get("Codigo")) if enviado.get("Codigo") else None)
+        ruta_lectura = path.strip("/")
+        if id is None and codigo and ruta_lectura.endswith("/" + codigo):
+            ruta_lectura = ruta_lectura[: -len(codigo) - 1]
         try:
             respuesta = client.request(
                 m, path, id=id, params=params, body=enviado if m != "DELETE" else None,
@@ -587,7 +802,21 @@ def crear_servidor(
                 f"convertir a JSON ({e})."
             )
         except Exception as e:  # noqa: BLE001
-            return responder(f"La escritura {m} {destino} falló.\n{_mensaje_error(e, path, id)}")
+            if _es_corte_de_conexion(e):
+                # Sin respuesta no se sabe si Finnegans aplico el cambio: reintentar
+                # a ciegas un POST puede duplicar el registro.
+                revisar = (
+                    f"leer('{ruta_lectura}', id='{codigo}')" if codigo
+                    else "leer (o el listado del recurso)"
+                )
+                return responder(
+                    f"No sé si la escritura {m} {destino} se aplicó: la conexión con "
+                    "Finnegans se cortó antes de recibir la respuesta, así que puede "
+                    f"haberse aplicado. Antes de reintentar, revisá con {revisar} si el "
+                    "cambio ya está; reintentar sin revisar puede duplicar un alta.\n"
+                    f"Detalle técnico (para IT): {corto(e, _RESPUESTA_API_MAX)}"
+                )
+            return responder(f"La escritura {m} {destino} falló.\n{error(e, path, id)}")
         estado["enviado"] = True
 
         if m == "DELETE":
@@ -595,7 +824,7 @@ def crear_servidor(
         else:
             lineas = [f"{m} {destino}: listo, Finnegans aceptó la escritura."]
         if respuesta not in (None, "", {}, []):
-            lineas.append(f"Respuesta de la API: {resumir_valor(respuesta, _RESPUESTA_API_MAX)}")
+            lineas.append(f"Respuesta de la API: {corto(respuesta, _RESPUESTA_API_MAX)}")
         if m not in ("PUT", "POST"):
             return responder("\n".join(lineas))
 
@@ -604,28 +833,24 @@ def crear_servidor(
         except Exception as e:  # noqa: BLE001
             lineas.append(
                 "La escritura se hizo, pero no pude confirmar en el swagger el tipo del "
-                f"endpoint, así que no releí el registro: {_mensaje_error(e)}"
+                f"endpoint, así que no releí el registro: {error(e)}"
             )
             return responder("\n".join(lineas))
         if tipo != "entidad":
             return responder("\n".join(lineas))
 
-        codigo = id or (str(enviado.get("Codigo")) if enviado.get("Codigo") else None)
         if not codigo:
             lineas.append(
                 "No releí el registro para compararlo: no sé su código (pasá id o "
                 "incluí Codigo en el body)."
             )
             return responder("\n".join(lineas))
-        ruta_lectura = path.strip("/")
-        if id is None and ruta_lectura.endswith("/" + codigo):
-            ruta_lectura = ruta_lectura[: -len(codigo) - 1]
         try:
             despues = client.request("GET", ruta_lectura, id=codigo)
         except Exception as e:  # noqa: BLE001
             lineas.append(
                 "La escritura se hizo, pero no pude releer el registro para compararlo: "
-                f"{_mensaje_error(e, ruta_lectura, codigo)}"
+                f"{error(e, ruta_lectura, codigo)}"
             )
             return responder("\n".join(lineas))
         if isinstance(despues, list) and len(despues) == 1:
@@ -638,15 +863,20 @@ def crear_servidor(
             try:
                 with candado:
                     workspace.cargar(base, despues)
+                    origen_tabla[base] = ruta_lectura
                 lineas.append(
                     f"Actualicé la tabla {base} con el registro releído: para otro cambio "
                     "usala de nuevo como base."
                 )
             except Exception as e:  # noqa: BLE001
-                lineas.append(f"No pude actualizar la tabla {base}: {_mensaje_error(e)}")
+                lineas.append(f"No pude actualizar la tabla {base}: {error(e)}")
         encabezado = "\n".join(lineas)
         disponible = RESPUESTA_MAX_CHARS - len(encabezado) - 2
-        texto = encabezado + "\n\n" + diff(antes, enviado, despues, max_chars=disponible)
+        # Se redacta antes del diff: el diff corta cada valor a 80 caracteres.
+        texto = encabezado + "\n\n" + diff(
+            _redactar_valores(limpiar, antes), _redactar_valores(limpiar, enviado),
+            _redactar_valores(limpiar, despues), max_chars=disponible,
+        )
         return responder(texto, f"Para ver el registro completo: leer('{ruta_lectura}', id='{codigo}').")
 
     # ------------------------------------------------------------------ guia
@@ -667,7 +897,7 @@ def crear_servidor(
         try:
             texto = guia_tema(tema)
         except Exception as e:  # noqa: BLE001
-            texto = _mensaje_error(e)
+            texto = error(e)
         return responder(texto, "Pedí otro tema con guia(tema).")
 
     # ---------------------------------------------------- verificar_conexion
@@ -741,7 +971,7 @@ def crear_servidor(
                     "- Documentación de Finnegans (MCP de docs): ERROR. No respondió o "
                     "rechazó las claves (Client ID de la documentación / Secret key de la "
                     "documentación). La búsqueda sigue funcionando solo con el swagger. "
-                    f"Detalle: {resumir_valor(e, _RESPUESTA_API_MAX)}"
+                    f"Detalle: {corto(e, _RESPUESTA_API_MAX)}"
                 )
         else:
             lineas.append(

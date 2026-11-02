@@ -103,7 +103,7 @@ async def test_ninguna_respuesta_supera_el_presupuesto(armar, tmp_path):
     docs = DocsFalso([{"path": f"ReporteClientes{i:04d}", "resumen": "r" * 300}
                       for i in range(600)])
     vo_enorme = copy.deepcopy(
-        {"ClienteVO": {"properties": {
+        {"ClienteVO": {"required": ["Codigo", "Campo599"], "properties": {
             "Codigo": {"type": "string"},
             "Items": {"type": "array", "items": {"type": "object", "properties": {
                 f"Sub{j:03d}": {"type": "string", "description": "d" * 100}
@@ -135,6 +135,9 @@ async def test_ninguna_respuesta_supera_el_presupuesto(armar, tmp_path):
 
     for nombre, out in salidas.items():
         assert len(out) <= RESPUESTA_MAX_CHARS, (nombre, len(out))
+    # Achicar no esconde lo importante: los requeridos del VO enorme se ven.
+    assert "Codigo*" in salidas["ver_cliente"] and "Campo599*" in salidas["ver_cliente"]
+    assert "campos más" in salidas["ver_cliente"]
 
 
 async def test_ver_endpoint_de_muchos_reportes_dice_como_acotar(armar):
@@ -547,3 +550,172 @@ async def test_error_inesperado_en_leer_no_llega_crudo(armar):
     out = await env.llamar("leer", path="cliente")
     assert "inesperado" in out
     assert CLIENT_SECRET not in out and "***" in out
+
+
+# ------------------------------------------------------ fix round 1
+
+
+def _vo_ancho(n=400, requeridos=("Codigo", "Nombre", "CampoLargoNombre399")):
+    """VO de 400 campos con nombres de largo real: su detalle no entra entero."""
+    props = {"Codigo": {"type": "string"}, "Nombre": {"type": "string"}}
+    props.update({f"CampoLargoNombre{j:03d}": {"type": "string"} for j in range(n)})
+    props["ProvinciaItems"] = {"type": "array", "items": {"type": "object", "properties": {
+        "Provincia": {"type": "string"}}}}
+    return {"ClienteVO": {"required": list(requeridos), "properties": props}}
+
+
+async def test_ver_endpoint_vo_ancho_muestra_requeridos_y_como_seguir(armar):
+    env = armar(vos=_vo_ancho())
+    out = await env.llamar("ver_endpoint", path="/cliente/{codigo}")
+    assert len(out) <= RESPUESTA_MAX_CHARS
+    # Los requeridos aparecen aunque esten al final del schema.
+    assert "Codigo*" in out and "Nombre*" in out and "CampoLargoNombre399*" in out
+    assert "createIfNotExists" in out
+    assert "campos más" in out
+    assert "metodo='PUT'" in out
+    # Nunca manda a repetir la misma llamada.
+    assert "ver_endpoint('/cliente/{codigo}')" not in out
+
+
+async def test_ver_endpoint_con_metodo_muestra_una_operacion_entera(armar):
+    env = armar(vos=_vo_ancho())
+    out = await env.llamar("ver_endpoint", path="cliente", metodo="put")
+    assert len(out) <= RESPUESTA_MAX_CHARS
+    assert "PUT /cliente/{codigo}" in out
+    assert "DELETE /cliente" not in out and "POST /cliente" not in out
+    assert "CampoLargoNombre000" in out and "CampoLargoNombre250" in out
+    # Si aun asi no entra, no propone repetir la misma llamada.
+    assert "metodo='PUT')" not in out
+
+
+async def test_ver_endpoint_metodo_inexistente(armar):
+    env = armar()
+    out = await env.llamar("ver_endpoint", path="/reports/ACOrdenesCompraPendientes",
+                           metodo="PUT")
+    assert "GET" in out
+
+
+async def test_ver_endpoint_campo_con_metodo(armar):
+    env = armar()
+    out = await env.llamar("ver_endpoint", path="cliente", campo="ProvinciaItems",
+                           metodo="POST")
+    assert "POST" in out and "ControlImpositivo1" in out
+
+
+async def test_ver_endpoint_muchas_operaciones_no_repite_la_llamada(armar):
+    env = armar(spec=spec_grande(600))
+    out = await env.llamar("ver_endpoint", path="reports")
+    assert "ver_endpoint('reports')" not in out
+
+
+async def test_escribir_base_de_otro_registro_se_rechaza(armar):
+    env = armar(lambda *a: _cliente("P01093"))
+    await env.llamar("leer", path="cliente", id="P01093")
+    for args in (
+        dict(id="P99999", path="cliente"),
+        dict(path="cliente/P99999"),
+    ):
+        out = await env.llamar("escribir", metodo="PUT", base="cliente_p01093",
+                               cambios={"Nombre": "x"}, **args)
+        assert "P01093" in out and "P99999" in out
+        assert "No se envió nada" in out
+    # cambiar Codigo en cambios no disfraza que la base es otro registro
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="P99999",
+                           base="cliente_p01093", cambios={"Codigo": "P99999"})
+    assert "No se envió nada" in out
+    assert [c.metodo for c in env.cliente.llamadas] == ["GET"]
+
+
+async def test_escribir_body_con_otro_codigo_se_rechaza(armar):
+    env = armar()
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="B",
+                           body={"Codigo": "A"})
+    assert "No se envió nada" in out
+    assert env.cliente.llamadas == []
+
+
+async def test_escribir_timeout_no_invita_a_reintentar(armar):
+    from finnegans_core.client import FinnegansError
+
+    def corta(*a):
+        raise FinnegansError("No se pudo conectar a Finnegans (cliente): timed out")
+
+    env = armar(corta)
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body={"Codigo": "N1"})
+    assert "puede haberse aplicado" in out
+    assert "leer" in out and "N1" in out
+    assert "falló" not in out
+    assert "Volve a intentar" not in out and "Volvé a intentar" not in out
+
+
+async def test_escribir_http_error_dice_fallo(armar):
+    from finnegans_core.client import FinnegansError
+
+    def rechaza(*a):
+        raise FinnegansError("Error en POST cliente (HTTP 500): boom")
+
+    env = armar(rechaza)
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body={"Codigo": "N1"})
+    assert "falló" in out
+    assert "puede haberse aplicado" not in out
+
+
+async def test_secreto_que_cruza_el_corte_no_deja_prefijo(armar):
+    from finnegans_core.client import FinnegansError
+    prefijo = CLIENT_SECRET[:10]
+
+    # Respuesta de la API cortada a 300 caracteres.
+    respuesta = "x" * 285 + CLIENT_SECRET + "y" * 50
+    env = armar(lambda m, *a: respuesta)
+    out = await env.llamar("escribir", metodo="PATCH", path="cliente", id="X",
+                           body={"Codigo": "X"})
+    assert prefijo not in out
+
+    # Detalle tecnico de traducir_error, cortado a 300.
+    cab = "Error en PUT cliente (HTTP 406): "
+    crudo = cab + "x" * (285 - len(cab)) + CLIENT_SECRET
+
+    def falla(*a):
+        raise FinnegansError(crudo)
+
+    env = armar(falla)
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="X",
+                           body={"Codigo": "X"})
+    assert prefijo not in out
+
+    # Error de la documentacion en verificar_conexion, cortado a 300.
+    docs = DocsFalso(error=DocsMcpError("d" * 280 + DOCS_KEY + "z" * 40))
+    env = armar(docs=docs)
+    out = await env.llamar("verificar_conexion")
+    assert DOCS_KEY[:10] not in out
+
+
+async def test_escribir_rechaza_base_de_un_listado(armar):
+    env = armar(lambda m, p, *a: [_cliente("P01093")] if p == "cliente/list" else {})
+    await env.llamar("leer", path="cliente/list")
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="P01093",
+                           base="cliente", cambios={"Nombre": "x"})
+    assert "leer(" in out and "id=" in out
+    assert "No se envió nada" in out
+    assert [c.metodo for c in env.cliente.llamadas] == ["GET"]
+
+
+async def test_escribir_rechaza_base_de_un_reporte(armar):
+    env = armar(lambda *a: _cliente("P01093"))
+    await env.llamar("leer", path="reports/ACOrdenesCompraPendientes", tabla="rep")
+    out = await env.llamar("escribir", metodo="PUT", path="cliente", id="P01093",
+                           base="rep", cambios={"Nombre": "x"})
+    assert "No se envió nada" in out
+    assert [c.metodo for c in env.cliente.llamadas] == ["GET"]
+
+
+async def test_leer_muestra_y_nota_redactan_antes_de_cortar(armar):
+    prefijo = CLIENT_SECRET[:10]
+    filas = [{"Codigo": str(i), "Texto": "x" * 105 + CLIENT_SECRET} for i in range(2000)]
+    env = armar(lambda *a: filas)
+    out = await env.llamar("leer", path="cliente/list")
+    assert "Muestra" in out
+    assert prefijo not in out
+    env = armar(lambda *a: "x" * 490 + CLIENT_SECRET + "y" * 9000)
+    out = await env.llamar("leer", path="texto")
+    assert prefijo not in out

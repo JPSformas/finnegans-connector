@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import weakref
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import duckdb
 
@@ -64,6 +64,7 @@ class Workspace:
             self, shutil.rmtree, self._dir, ignore_errors=True
         )
         self._crudos: dict[str, Any] = {}
+        self._redactar: Callable[[str], str] = lambda texto: texto
         self._n_archivo = 0
         self._con = duckdb.connect(":memory:")
         # Orden importa: primero el directorio permitido, despues cerrar el
@@ -78,6 +79,14 @@ class Workspace:
         self._con.execute("SET autoload_known_extensions=false")
         self._con.execute("SET memory_limit=?", [memoria])
         self._con.execute("SET lock_configuration=true")
+
+    def usar_redactor(self, redactar: Callable[[str], str]) -> None:
+        """Funcion que borra secretos de la muestra y la nota, antes de cortarlas.
+
+        Se aplica antes del corte: un secreto partido al medio ya no se
+        reconoce y su primera parte quedaria visible.
+        """
+        self._redactar = redactar
 
     # -- ciclo de vida ----------------------------------------------------
 
@@ -105,6 +114,7 @@ class Workspace:
             # escribir(base=...) la usaría como base de un cambio.
             self._olvidar(tabla)
             texto = datos if isinstance(datos, str) else json.dumps(datos, ensure_ascii=False, default=str)
+            texto = self._redactar(texto)
             nota = f"La API devolvió un valor sin forma de tabla: {texto[:_NOTA_MAX_CHARS]}"
             if len(texto) > _NOTA_MAX_CHARS:
                 nota += f"… (texto cortado: tenía {len(texto)} caracteres)"
@@ -172,16 +182,19 @@ class Workspace:
             self._muestra([c[0] for c in columnas], muestra_filas), None,
         )
 
-    @staticmethod
-    def _muestra(nombres: list[str], filas: list[tuple]) -> str:
+    def _muestra(self, nombres: list[str], filas: list[tuple]) -> str:
         """Filas de muestra acortadas hasta que entren en el tope.
 
         Si ni una fila entra (muchas columnas), lista los nombres de columna
-        y avisa cuantas faltan: nunca recorta en silencio.
+        y avisa cuantas faltan: nunca recorta en silencio. Cada celda se
+        redacta entera antes de cortarla.
         """
+        enteras = [
+            tuple(self._redactar(resumir_valor(v, 10**9)) for v in f) for f in filas
+        ]
         largo = 120
         while True:
-            chicas = [tuple(resumir_valor(v, largo) for v in f) for f in filas]
+            chicas = [tuple(resumir_valor(v, largo) for v in f) for f in enteras]
             texto, _ = formatear_tabla(nombres, chicas, 10**9)
             if len(texto) <= _MUESTRA_MAX_CHARS or largo <= 8:
                 break

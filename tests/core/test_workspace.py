@@ -344,3 +344,15 @@ def test_palabras_reservadas_cubren_la_version_instalada():
     ).fetchall()
     faltan = {f[0] for f in filas} - PALABRAS_RESERVADAS
     assert not faltan
+
+
+def test_redactor_se_aplica_antes_de_cortar_muestra_y_nota():
+    w = Workspace()
+    try:
+        w.usar_redactor(lambda t: t.replace("SECRETO-LARGO", "***"))
+        r = w.cargar("t", [{"a": "x" * 110 + "SECRETO-LARGO"}])
+        assert "SECRETO" not in r.muestra
+        r = w.cargar("u", "x" * 495 + "SECRETO-LARGO" + "y" * 100)
+        assert "SECRETO" not in (r.nota or "")
+    finally:
+        w.cerrar()
