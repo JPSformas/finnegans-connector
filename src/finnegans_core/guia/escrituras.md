@@ -12,6 +12,29 @@ entidades con `PUT /api/{entidad}/{codigo}`.
 - Crear: `escribir(metodo="POST", path=..., body=...)`. Upsert:
   `escribir(metodo="PUT", ..., params={"createIfNotExists": "1"})`.
 
+## El alta ignora el Codigo que mandás
+Verificado contra la API real (alta de `cliente`): en un POST Finnegans
+**ignora el `Codigo` del body** y le asigna su propio código al registro nuevo.
+Lo devuelve en `id` de la respuesta (`{"id": "2956", "message": "created"}`).
+`escribir` relee el registro con ese código y te dice cuál le asignó (y si es
+distinto del que mandaste). Para modificarlo o borrarlo después usá ese código:
+el que mandaste en el body no existe.
+
+## Campos obligatorios que el swagger no marca
+El POST de `cliente` falla (HTTP 500) si faltan estos dos campos, aunque el
+swagger no los marque como requeridos:
+- `CategoriaFiscalCodigo` ("Debe indicar la categoría fiscal"). Valores de
+  `categoriaFiscal/list`: RI, EX, MO, CF, DEX, RFactM, IVARI, FCEGRANRI,
+  FCEEXENTO, "CF DEMO", "Sin identificación".
+- `IdentificacionTributariaCodigo` ("Falta especificar Identificación
+  Tributaria"). Valores de `identificacionTributaria/list`: SINIDENTIFICACION,
+  CUIT, DNI, CUIL, CUITE, PAS.
+
+Son decisiones fiscales: **preguntale al usuario cuál corresponde**, nunca la
+elijas vos. Con CF + SINIDENTIFICACION no hizo falta número. Con CUIT, DNI u
+otro tipo con número, presumiblemente también hace falta
+`IdentificacionTributariaNumero`.
+
 ## Procedimiento (leer, modificar, escribir)
 1. Cargá el registro con `leer` (queda como tabla en el workspace).
 2. Usá `escribir` con `base=<tabla>` y `cambios={...}`: modifica SOLO los campos

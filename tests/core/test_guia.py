@@ -114,5 +114,20 @@ def test_escrituras_describe_el_flujo_nuevo():
     assert "ver_endpoint" in esc
 
 
+@pytest.mark.parametrize("tema", ["escrituras", "clientes"])
+def test_alta_de_cliente_documenta_lo_que_mostro_la_prueba_en_vivo(tema):
+    texto = guia(tema)
+    for hecho in ("CategoriaFiscalCodigo", "IdentificacionTributariaCodigo",
+                  "SINIDENTIFICACION", "CUIT", "asigna", "IdentificacionTributariaNumero"):
+        assert hecho in texto, hecho
+    for categoria in ("RI", "EX", "MO", "CF", "DEX", "RFactM", "IVARI", "FCEGRANRI",
+                      "FCEEXENTO", "CF DEMO", "Sin identificación"):
+        assert categoria in texto, categoria
+    for ident in ("DNI", "CUIL", "CUITE", "PAS"):
+        assert ident in texto, ident
+    assert "Preguntale al usuario" in texto or "preguntale al usuario" in texto
+    assert "`id`" in texto
+
+
 def test_escrituras_no_impone_confirmacion_obligatoria():
     assert "confirmá con el usuario" not in guia("escrituras")
