@@ -9,7 +9,8 @@ entidades con `PUT /api/{entidad}/{codigo}`.
   la API responde `HTTP 406 "Not Acceptable: empty id"` aunque la URL traiga el
   código.
 - `PUT ...?createIfNotExists=1` inserta si el registro no existe (upsert).
-- Crear: `POST /api/{entidad}`.
+- Crear: `escribir(metodo="POST", path=..., body=...)`. Upsert:
+  `escribir(metodo="PUT", ..., params={"createIfNotExists": "1"})`.
 
 ## Procedimiento (leer, modificar, escribir)
 1. Cargá el registro con `leer` (queda como tabla en el workspace).
@@ -28,15 +29,17 @@ cambió X" sin haberlo comparado.
 Si el registro venía en un estado que la API rechaza (ver `iibb`), no se puede
 volver atrás por API: hay que hacerlo por la interfaz de Finnegans.
 
-## Advertencias confiables
-El validador resuelve el schema real del body:
-- "Falta el campo requerido X" en un PUT casi siempre significa que armaste un
-  body parcial: volvé al procedimiento de arriba.
-- "Campo desconocido X": el campo no existe en la entidad (error de tipeo o de
-  nombre).
-- Si dice "(sin schema: no se pudo verificar contra la documentación)", no hay
-  red de seguridad: avisale al usuario.
-Si hay advertencias, avisale al usuario antes de seguir.
+## Antes y después de escribir
+`escribir` ejecuta de inmediato y no hay vista previa: confirmá con el usuario
+qué vas a cambiar antes de llamarlo.
+- Antes: usá `ver_endpoint(path)` para ver los campos del body y cuáles son
+  requeridos; `ver_endpoint(path, campo=...)` detalla un campo puntual.
+- La propia API rechaza los bodies inválidos (por ejemplo 406 "empty id", o 500
+  con IIBB mixto) y `escribir` te devuelve ese error traducido a castellano
+  claro. Explicáselo al usuario; un 406 "empty id" casi siempre significa que
+  falta `Codigo` en el body o que armaste un body parcial.
+- Después: leé el diff que devuelve `escribir` y decile al usuario qué campos
+  cambiaron y cuáles cambió la API por su cuenta.
 
 ## Seguridad
 - Nunca pidas ni guardes contraseñas personales.

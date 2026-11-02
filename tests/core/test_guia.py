@@ -16,6 +16,9 @@ PROHIBIDOS = (
     "buscar_api",
     "ver_api",
     ".env",
+    "preview",
+    "advertencia",
+    "validador",
 )
 
 
@@ -100,3 +103,10 @@ def test_guia_conserva_hechos_clave():
         "getLastDayOfLastWeek", "getFirstDayOfLastYear", "getLastDayOfLastYear",
     ):
         assert const in par
+
+
+def test_escrituras_describe_el_flujo_nuevo():
+    esc = guia("escrituras")
+    assert 'escribir(metodo="POST"' in esc
+    assert 'params={"createIfNotExists": "1"}' in esc
+    assert "ver_endpoint" in esc

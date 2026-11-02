@@ -7,7 +7,7 @@ _DESCRIPCIONES: dict[str, str] = {
     "iibb": "Situaciones de IIBB (ControlImpositivo1) y sus reglas",
     "rutas": "Convención de rutas y cómo encontrar el endpoint",
     "tipos": "Tipos de endpoint: Viewer, EntidadVO y otros",
-    "escrituras": "PUT de registro completo, diff y advertencias",
+    "escrituras": "PUT de registro completo, crear/upsert y diff",
     "clientes": "cliente/list, formatos de código y datos sucios",
     "parametros": "Parámetros de reportes: fechas relativas, arbol(), DEALS",
 }
