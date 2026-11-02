@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "finnegans",
   "display_name": "Finnegans",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Consultá y modificá datos de Finnegans desde Claude, en lenguaje natural.",
   "long_description": "Conecta Claude con la API de Finnegans: busca el endpoint correcto, lee datos, los consulta con SQL, los exporta a Excel o CSV y, cuando se lo pedís, escribe cambios. Las lecturas y las escrituras son herramientas separadas para que Claude Desktop pida permiso antes de modificar algo.",
   "author": {
