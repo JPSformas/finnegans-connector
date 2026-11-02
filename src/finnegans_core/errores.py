@@ -40,7 +40,7 @@ def traducir_error(api_id: str, mensaje: str, id: str | None = None) -> str:
     if "no se pudo encontrar la api" in bajo:
         return (
             f"No existe una API llamada '{recurso}' en Finnegans. Lo mas probable es "
-            f"que se escriba distinto: usa buscar_api para dar con el nombre correcto."
+            f"que se escriba distinto: usa buscar_endpoint para dar con el nombre correcto."
         )
 
     # Caso mas comun: pedir el listado de un documento en vez de un maestro.
@@ -99,7 +99,7 @@ def traducir_error(api_id: str, mensaje: str, id: str | None = None) -> str:
         return (
             f"Finnegans no pudo procesar la operacion sobre '{recurso}'. Casi siempre "
             f"es un parametro obligatorio que falta o que viene con otro formato. "
-            f"Usa ver_api('{recurso}') para ver cuales pide."
+            f"Usa ver_endpoint('{recurso}') para ver cuales pide."
         )
 
     salida = f"No pude completar la operacion sobre '{recurso}'."

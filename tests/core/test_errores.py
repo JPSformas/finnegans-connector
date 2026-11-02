@@ -65,9 +65,9 @@ class TestOtrosErrores(unittest.TestCase):
         self.assertIn("IT", msg)
         self.assertNotIn("401", msg)
 
-    def test_500_sugiere_revisar_parametros_con_ver_api(self):
+    def test_500_sugiere_revisar_parametros_con_ver_endpoint(self):
         msg = traducir_error("reports/MOVINT", CRUDO_500)
-        self.assertIn("ver_api", msg)
+        self.assertIn("ver_endpoint", msg)
         self.assertIn("parametro", msg.lower())
         self.assertNotIn("500", msg)
 
@@ -148,7 +148,7 @@ class TestApiInexistente(unittest.TestCase):
         self.msg = traducir_error("remito/list", CRUDO_API_INEXISTENTE)
 
     def test_manda_a_buscar_el_nombre_correcto(self):
-        self.assertIn("buscar_api", self.msg)
+        self.assertIn("buscar_endpoint", self.msg)
 
     def test_nombra_lo_que_se_pidio(self):
         self.assertIn("remito", self.msg)
