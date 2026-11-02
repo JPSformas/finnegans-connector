@@ -18,7 +18,8 @@ Pasos:
   1. Lee cliente/list y cliente/ZZ-PRUEBA-MCP por id: busca restos de corridas
      anteriores.
   2. Lee la plantilla (y guarda una foto), arma el alta con SOLO los campos
-     obligatorios del swagger (sin ids ni guids, a ninguna profundidad) y decide
+     obligatorios del swagger (sin ids ni guids a ninguna profundidad, salvo
+     referencias conocidas como ProvinciaID dentro de las listas) y decide
      como dejarla inactiva. Si hay campos "unicos" (CUIT, documento, email...)
      aborta salvo que pases --permitir-copiar-campos-unicos.
   3. Borra los restos que hubiera.
@@ -68,15 +69,13 @@ TABLA_VERIFICACION = "zz_prueba_verificacion"
 # Claves que identifican un registro: si viajaran en el alta, Finnegans podria
 # modificar la plantilla en vez de crear uno nuevo.
 _CLAVE_IDENTIDAD = re.compile(r"^(?i:id|guid|uuid)$|^(?i:id)[A-Z_]|(?i:_?id)$")
-# Dentro de las listas (ProvinciaItems...) un XxxID suele ser una referencia a otro
-# maestro (ProvinciaID = "BSAS"): sacarla deja la fila incompleta y Finnegans
-# rechaza el alta. Ahi solo se sacan el id propio de la fila y los que apuntan
-# al cliente o a la fila.
-_CLAVE_IDENTIDAD_ANIDADA = re.compile(
-    r"^(?:id|guid|uuid)$"
-    r"|(?:cliente|fila|item|row|linea|renglon)_?(?:id|guid|uuid)$"
-    r"|^(?:id|guid|uuid)_?(?:cliente|fila|item|row|linea|renglon)",
-    re.IGNORECASE)
+# Dentro de las listas, algunos XxxID son referencias a otro maestro
+# (ProvinciaID = "BSAS"): sacarlas deja la fila incompleta y Finnegans rechaza el
+# alta. Solo se conservan las de esta lista, vistas en clientes reales; cualquier
+# otra clave con forma de id (ContactoID, OrganizacionID...) puede ser el id de una
+# fila de la plantilla y se saca. Si falta una referencia, el alta falla: no se
+# adivina.
+_REFERENCIAS_ANIDADAS = frozenset({"provinciaid", "actividadiibbid"})
 # Campos que suelen ser unicos en Finnegans (un duplicado rechaza el alta).
 _CLAVE_UNICA = re.compile(
     r"cuit|cuil|documento|nrodoc|email|mail|correo|nroinscripcion|dni", re.IGNORECASE)
@@ -193,17 +192,16 @@ def campo_activo(plantilla: Mapping[str, Any], texto_ver_endpoint: str) -> str:
 
 
 def _sin_identidad(valor: Any, sacadas: set[str], anidado: bool = False) -> Any:
-    """Copia sin las claves de identidad, a toda profundidad.
+    """Copia sin las claves de identidad (id, guid, IdXxx, XxxId), a toda profundidad.
 
-    Arriba de todo se saca cualquier clave con forma de id (id, guid, IdXxx, XxxId);
-    adentro, solo las de _CLAVE_IDENTIDAD_ANIDADA, para no perder referencias a
-    otros maestros como ProvinciaID.
+    La unica excepcion son las referencias de _REFERENCIAS_ANIDADAS dentro de
+    listas u objetos anidados (ProvinciaID...).
     """
-    patron = _CLAVE_IDENTIDAD_ANIDADA if anidado else _CLAVE_IDENTIDAD
     if isinstance(valor, dict):
         limpio = {}
         for k, v in valor.items():
-            if patron.search(str(k)):
+            referencia = anidado and str(k).lower() in _REFERENCIAS_ANIDADAS
+            if _CLAVE_IDENTIDAD.search(str(k)) and not referencia:
                 sacadas.add(str(k))
             else:
                 limpio[k] = _sin_identidad(v, sacadas, True)
@@ -249,7 +247,8 @@ def armar_alta(plantilla: dict, flag: str, requeridos: list[str] | None = None,
 
     Solo con copiar_resto se parte de toda la plantilla. Sin lista de requeridos y
     sin copiar_resto se aborta: no se copia la plantilla entera en silencio. En todos
-    los casos se sacan las claves de identidad a cualquier profundidad y despues se
+    los casos se sacan las claves de identidad a cualquier profundidad (salvo las
+    referencias de _REFERENCIAS_ANIDADAS dentro de listas) y despues se
     pisan codigo, nombre y estado (inactivo). Devuelve (body, claves de identidad
     sacadas).
     """
@@ -257,8 +256,8 @@ def armar_alta(plantilla: dict, flag: str, requeridos: list[str] | None = None,
         raise ErrorPrueba(
             "No pude determinar los campos requeridos del alta de cliente (el swagger no "
             "los lista o no está disponible), así que no sé qué copiar de la plantilla. No "
-            "se escribió nada. Si querés copiar toda la plantilla (siempre sin ids ni "
-            "guids), pasá --copiar-resto-de-la-plantilla."
+            "se escribió nada. Si querés copiar toda la plantilla (sin ids ni guids, salvo "
+            "referencias como ProvinciaID), pasá --copiar-resto-de-la-plantilla."
         )
     if copiar_resto:
         origen = plantilla
@@ -666,7 +665,7 @@ def _parser() -> argparse.ArgumentParser:
                         "documento, email...); sin esto la prueba aborta antes de escribir")
     p.add_argument("--copiar-resto-de-la-plantilla", action="store_true",
                    help="si el alta con solo los campos requeridos es rechazada: copia toda "
-                        "la plantilla (siempre sin ids ni guids)")
+                        "la plantilla (sin ids ni guids, salvo referencias como ProvinciaID)")
     return p
 
 

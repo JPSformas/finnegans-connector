@@ -382,9 +382,12 @@ def test_alta_sin_ids_de_la_plantilla_a_ninguna_profundidad(tmp_path, capsys):
 
 
 VO_COMO_P02197 = {
-    "required": ["Codigo", "Nombre", "ProvinciaItems", "GrupoDifusionItems"],
+    "required": ["Codigo", "Nombre", "ProvinciaItems", "GrupoDifusionItems", "Percepciones",
+                 "Contactos"],
     "properties": {**VO_CON_ACTIVO["properties"],
-                   "GrupoDifusionItems": {"type": "array", "items": {"type": "object"}}},
+                   "GrupoDifusionItems": {"type": "array", "items": {"type": "object"}},
+                   "Percepciones": {"type": "array", "items": {"type": "object"}},
+                   "Contactos": {"type": "array", "items": {"type": "object"}}},
 }
 
 
@@ -399,6 +402,9 @@ def _como_p02197() -> dict:
              "Coeficiente": 0.0, "ControlImpositivo1": 1, "CodigoImpositivoRetencion": ""},
         ],
         GrupoDifusionItems=[{"GrupoDifusionCodigo": "EMF", "Email": "falso@example.com"}],
+        Percepciones=[{"TipoRetencionCodigo": "IIBB_CABA", "RetencionCodigo": "GENCABA",
+                       "FechaDesde": "2025-01-01", "Porcentaje": 3.0, "Modo": 0}],
+        Contactos=[{"ContactoID": 41, "Nombre": "Contacto falso"}],
     )
 
 
@@ -411,6 +417,9 @@ def test_alta_conserva_las_referencias_anidadas_como_provinciaid(tmp_path, capsy
     post = [c for c in escrituras(cli) if c.metodo == "POST"][0].body
     assert [f["ProvinciaID"] for f in post["ProvinciaItems"]] == ["BSAS", "CABA"]
     assert post["ProvinciaItems"][1]["ActividadIIBBID"] == "A1"
+    assert post["Percepciones"][0]["RetencionCodigo"] == "GENCABA"
+    # El id de la fila de contacto de la plantilla no viaja.
+    assert post["Contactos"] == [{"Nombre": "Contacto falso"}]
     # Lo que no es requerido no viaja: ni el CUIT ni la descripcion.
     assert "IdentificacionTributariaNumero" not in post and "Descripcion" not in post
     assert "ProvinciaItems[].ProvinciaID" in out
@@ -424,13 +433,21 @@ def test_sin_permiso_los_mails_de_difusion_frenan_antes_de_escribir(tmp_path, ca
     assert "GrupoDifusionItems[].Email" in out + err
 
 
-def test_regex_anidada_saca_ids_propios_y_conserva_referencias():
-    sacar = ["id", "Id", "GUID", "uuid", "IdFila", "Fila_Id", "ClienteID", "IDCliente",
-             "cliente_id", "ItemId", "RowGuid", "LineaID"]
-    conservar = ["ProvinciaID", "ActividadIIBBID", "MonedaID", "TipoRetencionCodigo",
-                 "Provincia", "Identificacion"]
-    assert all(script._CLAVE_IDENTIDAD_ANIDADA.search(k) for k in sacar)
-    assert not any(script._CLAVE_IDENTIDAD_ANIDADA.search(k) for k in conservar)
+def test_anidado_saca_ids_de_fila_y_conserva_solo_referencias_conocidas():
+    sacar = ["id", "GUID", "IdFila", "Fila_Id", "ClienteID", "IDCliente", "ContactoID",
+             "DireccionID", "PercepcionID", "OrganizacionID", "IdOrganizacion",
+             "TransaccionID", "ParentID", "MonedaID"]
+    conservar = ["ProvinciaID", "ActividadIIBBID", "TipoRetencionCodigo", "Provincia",
+                 "Identificacion"]
+    fila = {k: 1 for k in sacar + conservar}
+    sacadas: set[str] = set()
+    limpio = script._sin_identidad({"Contactos": [fila], "Org": {"OrganizacionID": 9}},
+                                   sacadas)
+    assert set(limpio["Contactos"][0]) == set(conservar)
+    assert limpio["Org"] == {}
+    assert set(sacar) <= sacadas
+    # Arriba de todo no hay excepciones: un ProvinciaID suelto tambien se saca.
+    assert script._sin_identidad({"ProvinciaID": "BSAS"}, set()) == {}
 
 
 def test_copiar_resto_tambien_saca_los_ids(tmp_path, capsys):
