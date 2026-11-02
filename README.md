@@ -68,7 +68,7 @@ Claude las elige solo según lo que le pedís.
 | `consultar` | Consulta con SQL de solo lectura las tablas ya cargadas, por páginas. |
 | `exportar` | Guarda el resultado de una consulta como Excel o CSV en la carpeta de exportación. |
 | `escribir` | Modifica datos en Finnegans (POST, PUT, PATCH o DELETE) y muestra qué cambió. |
-| `guia` | Explica reglas del negocio: sucursales, IIBB, rutas, tipos de endpoint, escrituras y clientes. |
+| `guia` | Explica reglas del negocio: sucursales, IIBB, rutas, tipos de endpoint, escrituras, clientes y parámetros de reportes. |
 | `verificar_conexion` | Comprueba las claves y la conexión, y dice cuál falla. |
 
 Las lecturas y las escrituras son herramientas separadas a propósito, para que
