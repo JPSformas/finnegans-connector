@@ -5,7 +5,7 @@ que hacer a continuacion.
 """
 import unittest
 
-from finnegans.errores import traducir_error
+from finnegans_core.errores import traducir_error
 
 
 # Mensajes crudos reales, tal como los arma FinnegansClient.request().

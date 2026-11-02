@@ -1,0 +1,23 @@
+# Entorno y cache de Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Control de versiones y editor
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Paquetes ya generados
+*.mcpb
+
+# Solo desarrollo: no viaja en la extension
+tests/
+docs/
+.github/
+scripts/

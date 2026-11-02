@@ -7,7 +7,7 @@ Tres problemas distintos, verificados contra la API real:
 """
 import unittest
 
-from finnegans import vocabulario as v
+from finnegans_core import vocabulario as v
 
 
 class TestNormalizar(unittest.TestCase):
