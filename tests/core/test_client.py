@@ -6,8 +6,8 @@ import pytest
 from finnegans_core.client import FinnegansAuthError, FinnegansClient, FinnegansError
 from finnegans_core.config import Settings
 
-SECRETO = "c35c93e38ea18d611e5676b448e02ff3"
-CID = "94bb5156bbb4a20106433f3112df6cd7"
+SECRETO = "fake-secret-0123456789abcdef0000"
+CID = "fake-client-id-0123456789abcd00"
 
 
 def _settings(**extra):
