@@ -12,15 +12,6 @@ KEY = "k3y-secreta-9f8e7d"
 SWAGGER_URL = "https://oneteam.finneg.com/BSA/api/swaggerGlobal"
 
 
-@pytest.fixture(autouse=True)
-def _limpiar_caches():
-    sw._SPEC_CACHE.clear()
-    sw._VO_CACHE.clear()
-    yield
-    sw._SPEC_CACHE.clear()
-    sw._VO_CACHE.clear()
-
-
 def _settings(**extra):
     env = {"FINNEGANS_SWAGGER_KEY": KEY, "FINNEGANS_SWAGGER_URL": SWAGGER_URL}
     env.update(extra)
@@ -473,7 +464,7 @@ def test_vo_con_error_http_o_sin_properties_degrada():
     # Los viewers devuelven un placeholder de error en lugar de un schema.
     red = Red(SPEC, {"ClienteVO": {"error": "no hay schema"}})
     assert _ver(red.catalogo(), "cliente", "PUT").body_schema_ok is False
-    sw._VO_CACHE.clear()
+    sw.limpiar_caches()
     assert _ver(Red(SPEC, {}).catalogo(), "cliente", "PUT").body_schema_ok is False
 
 
@@ -526,6 +517,51 @@ def test_campo_es_case_insensitive_en_metodo(cat):
     assert "ControlImpositivo1" in cat.campo("cliente", "put", "ProvinciaItems")
 
 
+def test_campo_no_expone_refs_externas_con_la_key():
+    ref = f"/BSA/api/swaggerApi?key={KEY}&api=cliente&nombreVO=SubVO"
+    vo = {"properties": {"Items": {"type": "array", "items": {
+        "properties": {"Sub": {"$ref": ref},
+                       "Nota": {"description": f"ver {KEY} y {KEY}".replace(" ", "+")},
+                       "Lista": {"allOf": [{"$ref": "#/definitions/Otro"}]}}}}}}
+    sub = Red(SPEC, {"ClienteVO": vo}).catalogo().campo("cliente", "PUT", "Items")
+    texto = str(sub)
+    assert KEY not in texto and "key=" not in texto
+    assert sub["Sub"] == {"$ref": "ref a SubVO"}
+    assert sub["Lista"] == {"allOf": [{"$ref": "ref a Otro"}]}
+
+
+def test_campo_con_ref_externa_sin_nombrevo_no_filtra():
+    vo = {"properties": {"Items": {"properties": {
+        "Sub": {"$ref": f"/BSA/api/swaggerApi?key={KEY}"}}}}}
+    sub = Red(SPEC, {"ClienteVO": vo}).catalogo().campo("cliente", "PUT", "Items")
+    assert KEY not in str(sub) and sub["Sub"] == {"$ref": "ref externa"}
+
+
+# ------------------------------------------------- mayusculas / minusculas
+
+def test_ver_sin_importar_mayusculas_devuelve_lo_mismo(cat):
+    esperado = cat.ver("cliente")
+    assert esperado
+    assert cat.ver("CLIENTE") == esperado
+    assert cat.ver("Cliente/list") == [o for o in esperado if o.path == "/cliente/list"]
+    # No se cambia el casing de lo devuelto.
+    assert {o.path for o in cat.ver("movimientofondos")} == {
+        "/movimientoFondos", "/movimientoFondos/{codigo}"}
+    assert cat.ver("reports/acordenescomprapendientes")[0].path == (
+        "/reports/ACOrdenesCompraPendientes")
+
+
+def test_la_coincidencia_exacta_gana_sobre_la_de_mayusculas():
+    spec = {"swagger": "2.0", "tags": [], "paths": {
+        "/Cliente": {"get": _op(["a"], "a", "a_get")},
+        "/cliente": {"get": _op(["b"], "b", "b_get")}}}
+    assert [o.path for o in Red(spec).catalogo().ver("cliente")] == ["/cliente"]
+
+
+def test_campo_sin_importar_mayusculas(cat):
+    assert "ControlImpositivo1" in cat.campo("CLIENTE", "put", "provinciaitems")
+
+
 # ---------------------------------------------------------- sin key en nada
 
 def test_la_key_no_aparece_en_ninguna_salida(red, cat):
@@ -533,3 +569,4 @@ def test_la_key_no_aparece_en_ninguna_salida(red, cat):
     for op in cat.ver("cliente"):
         assert "abc123" not in json.dumps(op.__dict__, default=str)
     assert KEY not in json.dumps([c.__dict__ for c in cat.buscar("cliente")])
+    assert "abc123" not in json.dumps(cat.campo("cliente", "PUT", "ProvinciaItems"))

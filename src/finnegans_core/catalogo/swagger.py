@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import httpx2
 
@@ -36,6 +36,12 @@ _VO_CACHE: dict[str, dict] = {}
 
 _TIPO_EN_TAG = re.compile(r"Tipo:\s*(\w+)")
 _TIPOS_POR_NOMBRE: dict[str, TipoEndpoint] = {"viewer": "viewer", "entidadvo": "entidad"}
+
+
+def limpiar_caches() -> None:
+    """Vacia el cache del spec y el de schemas de body (para tests y recargas)."""
+    _SPEC_CACHE.clear()
+    _VO_CACHE.clear()
 
 
 class SwaggerError(Exception):
@@ -131,6 +137,14 @@ def _url_de_ref(ref: str, source_url: str) -> str:
 
 def _primer_segmento(path: str) -> str:
     return path.strip("/").split("/")[0]
+
+
+def _nombre_de_ref(ref: str) -> str:
+    """Nombre legible de una ref, sin su URL: una ref externa lleva la key."""
+    if _es_ref_externa(ref):
+        nombres = parse_qs(urlsplit(ref).query).get("nombreVO")
+        return f"ref a {nombres[0]}" if nombres else "ref externa"
+    return f"ref a {ref.split('/')[-1]}"
 
 
 class SwaggerCatalog:
@@ -346,18 +360,26 @@ class SwaggerCatalog:
         return params, body, tiene_body
 
     def _operaciones_de(self, recurso_o_path: str) -> list[tuple[str, str, dict, dict]]:
-        """(metodo, path, detalle, ops_del_path) de lo que matchea el recurso."""
+        """(metodo, path, detalle, ops_del_path) de lo que matchea el recurso.
+
+        Matchea exacto y, si no hay nada, sin importar mayusculas: Claude suele
+        escribir 'movimientofondos' donde el spec dice 'movimientoFondos'.
+        """
         objetivo = (recurso_o_path or "").strip("/")
-        salida: list[tuple[str, str, dict, dict]] = []
-        for path, ops in (self.spec().get("paths") or {}).items():
-            if not isinstance(ops, dict):
-                continue
-            if path.strip("/") != objetivo and _primer_segmento(path) != objetivo:
-                continue
-            for m, detail in ops.items():
-                if m.lower() in _METODOS_HTTP and isinstance(detail, dict):
-                    salida.append((m.upper(), path, detail, ops))
-        return salida
+        paths = [(p, o) for p, o in (self.spec().get("paths") or {}).items()
+                 if isinstance(o, dict)]
+        for normalizar in (lambda t: t, str.lower):
+            salida: list[tuple[str, str, dict, dict]] = []
+            for path, ops in paths:
+                if (normalizar(path.strip("/")) != normalizar(objetivo)
+                        and normalizar(_primer_segmento(path)) != normalizar(objetivo)):
+                    continue
+                for m, detail in ops.items():
+                    if m.lower() in _METODOS_HTTP and isinstance(detail, dict):
+                        salida.append((m.upper(), path, detail, ops))
+            if salida:
+                return salida
+        return []
 
     def ver(self, recurso_o_path: str) -> list[Operacion]:
         """Operaciones de un recurso ('cliente') o de un path exacto."""
@@ -399,6 +421,9 @@ class SwaggerCatalog:
                 f"{metodo} '{recurso_o_path}' no tiene un schema de body disponible.")
         props = body.get("properties") or {}
         if campo not in props:
+            # Exacto primero; si no, sin importar mayusculas.
+            campo = next((k for k in props if k.lower() == campo.lower()), campo)
+        if campo not in props:
             raise SwaggerError(
                 f"El body de {metodo} '{recurso_o_path}' no tiene el campo '{campo}'. "
                 f"Campos disponibles: {', '.join(props) or '(ninguno)'}.")
@@ -409,4 +434,22 @@ class SwaggerCatalog:
         destino = items if isinstance(items, dict) else definicion
         destino, _ = self._resolver_schema(destino, contexto=body)
         sub = destino.get("properties") or {}
-        return dict(sub) if isinstance(sub, dict) else {}
+        return self._sanear(sub) if isinstance(sub, dict) else {}
+
+    def _sanear(self, valor):
+        """Copia segura para devolver: sin refs con key y sin secretos en strings.
+
+        Una propiedad anidada puede ser una ref externa que lleva la key del
+        swagger en su query string; se deja solo el nombre.
+        """
+        if isinstance(valor, dict):
+            return {
+                k: (_nombre_de_ref(v) if k == "$ref" and isinstance(v, str)
+                    else self._sanear(v))
+                for k, v in valor.items()
+            }
+        if isinstance(valor, list):
+            return [self._sanear(v) for v in valor]
+        if isinstance(valor, str):
+            return self.redactor.limpiar(valor)
+        return valor
