@@ -383,9 +383,60 @@ async def test_escribir_post_relectura_del_codigo_asignado_fallida(armar):
     env = armar(handler)
     out = await env.llamar("escribir", metodo="POST", path="cliente",
                            body=_cliente("ZZ-PRUEBA-MCP"))
-    assert "le asignó '2956'" in out
-    assert "la escritura se hizo, pero no pude releer" in out.lower()
-    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == ["2956"]
+    assert "asignó" not in out
+    assert "no sé con qué código quedó el registro" in out
+    assert "la API devolvió id '2956'" in out
+    assert "Antes de cualquier PUT o DELETE" in out
+    assert "Campos que la API cambió por su cuenta" not in out
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == [
+        "2956", "ZZ-PRUEBA-MCP"]
+
+
+async def test_escribir_post_id_404_relee_con_el_codigo_enviado(armar):
+    enviado = _cliente("ZZ-PRUEBA-MCP")
+    guardado = dict(copy.deepcopy(enviado), Nombre="Normalizado")
+
+    def handler(metodo, path, id, params, body):
+        if metodo == "POST":
+            return {"id": "88123", "message": "created"}
+        if metodo == "GET" and id == "ZZ-PRUEBA-MCP":
+            return guardado
+        from finnegans_core.client import FinnegansError
+        raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
+
+    env = armar(handler)
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body=enviado)
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == [
+        "88123", "ZZ-PRUEBA-MCP"]
+    assert "asignó" not in out
+    assert "lo releí con el Codigo enviado 'ZZ-PRUEBA-MCP'" in out
+    _, por_su_cuenta = _secciones(out)
+    assert "Normalizado" in por_su_cuenta
+
+
+async def test_escribir_post_id_que_relee_otro_registro_no_muestra_su_diff(armar):
+    # El id de la respuesta es interno: con el se lee un registro de otro codigo.
+    enviado = _cliente("ZZ-PRUEBA-MCP")
+    ajeno = _cliente("P00077", Nombre="Registro ajeno")
+
+    def handler(metodo, path, id, params, body):
+        if metodo == "POST":
+            return {"id": "77", "message": "created"}
+        if metodo == "GET" and id == "77":
+            return ajeno
+        from finnegans_core.client import FinnegansError
+        raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
+
+    env = armar(handler)
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body=enviado)
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == [
+        "77", "ZZ-PRUEBA-MCP"]
+    assert "asignó" not in out
+    assert "Campos que la API cambió por su cuenta" not in out
+    assert "P00077" not in out and "Registro ajeno" not in out
+    assert "no sé con qué código quedó el registro" in out
+    assert "la API devolvió id '77'" in out
+    assert "leer o consultar" in out
 
 
 async def test_escribir_post_sin_id_en_la_respuesta_relee_con_el_body(armar):

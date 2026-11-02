@@ -12,13 +12,18 @@ entidades con `PUT /api/{entidad}/{codigo}`.
 - Crear: `escribir(metodo="POST", path=..., body=...)`. Upsert:
   `escribir(metodo="PUT", ..., params={"createIfNotExists": "1"})`.
 
-## El alta ignora el Codigo que mandás
-Verificado contra la API real (alta de `cliente`): en un POST Finnegans
-**ignora el `Codigo` del body** y le asigna su propio código al registro nuevo.
-Lo devuelve en `id` de la respuesta (`{"id": "2956", "message": "created"}`).
-`escribir` relee el registro con ese código y te dice cuál le asignó (y si es
-distinto del que mandaste). Para modificarlo o borrarlo después usá ese código:
-el que mandaste en el body no existe.
+## El alta de `cliente` ignora el Codigo que mandás
+Verificado contra la API real solo para el alta de `cliente`: en un POST
+Finnegans **ignora el `Codigo` del body** y le asigna su propio código al
+registro nuevo. Lo devuelve en `id` de la respuesta
+(`{"id": "2956", "message": "created"}`). Para modificarlo o borrarlo después
+usá ese código: el que mandaste en el body no existe.
+
+Otras entidades pueden comportarse distinto (respetar el Codigo, o devolver en
+`id` un número interno que no es el código). `escribir` relee el registro y te
+dice qué pasó: si confirma el código asignado lo informa; si no lo puede
+confirmar, avisa que el código es incierto y hay que buscarlo con `leer` o
+`consultar` antes de cualquier PUT o DELETE.
 
 ## Campos obligatorios que el swagger no marca
 El POST de `cliente` falla (HTTP 500) si faltan estos dos campos, aunque el

@@ -132,8 +132,9 @@ def _mismo_codigo(a: Any, b: Any) -> bool:
 def _id_asignado(respuesta: Any) -> str | None:
     """Codigo que Finnegans devuelve en 'id' tras un alta ({"id": "2956", ...}).
 
-    En un POST Finnegans ignora el Codigo del body y asigna el suyo: lo
-    devuelve en 'id' (la clave puede venir con otra capitalizacion).
+    En el POST de cliente Finnegans ignora el Codigo del body y asigna el suyo:
+    lo devuelve en 'id' (la clave puede venir con otra capitalizacion). Otra
+    entidad puede devolver un id interno: escribir lo confirma releyendo.
     """
     if not isinstance(respuesta, dict):
         return None
@@ -144,6 +145,13 @@ def _id_asignado(respuesta: Any) -> str | None:
         if texto:
             return texto
     return None
+
+
+def _un_registro(v: Any) -> dict | None:
+    """El registro de una relectura: un dict, o la unica fila de una lista."""
+    if isinstance(v, list) and len(v) == 1:
+        v = v[0]
+    return v if isinstance(v, dict) else None
 
 
 def _id_texto(id: str | int | None) -> str | None:
@@ -881,35 +889,73 @@ def crear_servidor(
             return responder("\n".join(lineas))
 
         asignado = _id_asignado(respuesta) if m == "POST" else None
+        despues = None
         if asignado:
-            if cod_enviado not in (None, "") and not _mismo_codigo(cod_enviado, asignado):
-                lineas.append(
-                    f"Finnegans ignoró el Codigo enviado '{cod_enviado}' y le asignó "
-                    f"'{asignado}': el registro nuevo quedó con el código {asignado}."
-                )
+            # El 'id' de la respuesta solo se toma como codigo si el registro que
+            # se relee con el tiene ese mismo codigo: verificado para cliente, otra
+            # entidad puede devolver un id interno que no es su Codigo.
+            try:
+                candidato = _un_registro(client.request("GET", ruta_lectura, id=asignado))
+            except Exception:  # noqa: BLE001
+                candidato = None
+            cod_releido = _codigo_de(candidato)
+            if cod_releido not in (None, "") and _mismo_codigo(cod_releido, asignado):
+                despues = candidato
+                if cod_enviado not in (None, "") and not _mismo_codigo(cod_enviado, asignado):
+                    lineas.append(
+                        f"Finnegans ignoró el Codigo enviado '{cod_enviado}' y le asignó "
+                        f"'{asignado}': el registro nuevo quedó con el código {asignado}."
+                    )
+                else:
+                    lineas.append(
+                        f"Finnegans le asignó al registro nuevo el código '{asignado}'."
+                    )
+                codigo = asignado
             else:
-                lineas.append(f"Finnegans le asignó al registro nuevo el código '{asignado}'.")
-            codigo = asignado
-
-        if not codigo:
-            lineas.append(
-                "No releí el registro para compararlo: no sé su código (pasá id o "
-                "incluí Codigo en el body)."
-            )
-            return responder("\n".join(lineas))
-        try:
-            despues = client.request("GET", ruta_lectura, id=codigo)
-        except Exception as e:  # noqa: BLE001
-            lineas.append(
-                "La escritura se hizo, pero no pude releer el registro para compararlo: "
-                f"{error(e, ruta_lectura, codigo)}"
-            )
-            return responder("\n".join(lineas))
-        if isinstance(despues, list) and len(despues) == 1:
-            despues = despues[0]
-        if not isinstance(despues, dict):
-            lineas.append("La relectura no devolvió un registro para comparar.")
-            return responder("\n".join(lineas))
+                # Sin confirmar el id: se relee con el Codigo enviado, y el diff solo
+                # se muestra si el registro releido tiene ese codigo.
+                if codigo and not _mismo_codigo(codigo, asignado):
+                    try:
+                        candidato = _un_registro(
+                            client.request("GET", ruta_lectura, id=codigo))
+                    except Exception:  # noqa: BLE001
+                        candidato = None
+                    cod_releido = _codigo_de(candidato)
+                    if cod_releido not in (None, "") and _mismo_codigo(cod_releido, codigo):
+                        despues = candidato
+                        lineas.append(
+                            f"La API devolvió id '{asignado}', pero no pude confirmar que "
+                            "sea el código del registro; lo releí con el Codigo enviado "
+                            f"'{codigo}'."
+                        )
+                if despues is None:
+                    lineas.append(
+                        "La escritura se hizo, pero no sé con qué código quedó el "
+                        f"registro: la API devolvió id '{asignado}' y no pude confirmar "
+                        "que sea su código releyendo el registro. Antes de cualquier PUT "
+                        "o DELETE, buscalo con leer o consultar (por ejemplo por el "
+                        "Nombre) para saber su código."
+                    )
+                    return responder("\n".join(lineas))
+        else:
+            if not codigo:
+                lineas.append(
+                    "No releí el registro para compararlo: no sé su código (pasá id o "
+                    "incluí Codigo en el body)."
+                )
+                return responder("\n".join(lineas))
+            try:
+                despues = client.request("GET", ruta_lectura, id=codigo)
+            except Exception as e:  # noqa: BLE001
+                lineas.append(
+                    "La escritura se hizo, pero no pude releer el registro para "
+                    f"compararlo: {error(e, ruta_lectura, codigo)}"
+                )
+                return responder("\n".join(lineas))
+            despues = _un_registro(despues)
+            if despues is None:
+                lineas.append("La relectura no devolvió un registro para comparar.")
+                return responder("\n".join(lineas))
 
         if base is not None:
             try:
