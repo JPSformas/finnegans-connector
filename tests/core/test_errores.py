@@ -59,6 +59,22 @@ class TestOtrosErrores(unittest.TestCase):
         self.assertIn("no existe", msg.lower())
         self.assertNotIn("404", msg)
 
+    def test_404_con_id_aparte_sugiere_el_listado_del_recurso(self):
+        msg = traducir_error("cliente", CRUDO_404, id="2956")
+        self.assertIn("'cliente/2956'", msg)
+        self.assertIn("'cliente/list'", msg)
+
+    def test_404_con_el_codigo_en_el_path_sugiere_el_listado_sin_el_codigo(self):
+        msg = traducir_error("cliente/2956", CRUDO_404)
+        self.assertIn("No existe 'cliente/2956'", msg)
+        self.assertIn("'cliente/list'", msg)
+        self.assertNotIn("cliente/2956/list", msg)
+
+    def test_404_de_un_reporte_no_inventa_un_listado(self):
+        msg = traducir_error("reports/NOEXISTE", CRUDO_404)
+        self.assertNotIn("/list", msg)
+        self.assertIn("buscar_endpoint", msg)
+
     def test_credenciales_rechazadas_manda_a_it(self):
         msg = traducir_error("cliente", CRUDO_401)
         self.assertIn("credenciales", msg.lower())

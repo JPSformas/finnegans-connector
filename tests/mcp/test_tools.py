@@ -822,3 +822,14 @@ async def test_codigo_en_minusculas_tambien_se_compara(armar):
                            body={"CODIGO": "A"})
     assert "No se envió nada" in out
     assert [c.metodo for c in env.cliente.llamadas] == ["GET"]
+
+
+async def test_leer_404_con_codigo_en_el_path_sugiere_el_listado_correcto(armar):
+    def handler(*a):
+        from finnegans_core.client import FinnegansError
+        raise FinnegansError("Error en GET cliente/2956 (HTTP 404): no existe")
+
+    env = armar(handler)
+    out = await env.llamar("leer", path="cliente/2956")
+    assert "No existe 'cliente/2956'" in out
+    assert "'cliente/list'" in out and "cliente/2956/list" not in out

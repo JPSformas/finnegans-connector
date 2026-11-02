@@ -19,6 +19,20 @@ def _recurso(api_id: str) -> str:
     return re.sub(r"/list$", "", limpio, flags=re.IGNORECASE)
 
 
+def _listado_de(recurso: str, id: str | None) -> str | None:
+    """Recurso cuyo '/list' sirve para buscar el codigo, o None si no hay listado.
+
+    Con el codigo dentro del path ('cliente/2956') el listado es 'cliente/list',
+    no 'cliente/2956/list'. Los reportes no tienen listado.
+    """
+    partes = [p for p in recurso.split("/") if p]
+    if partes and partes[0].lower() == "reports":
+        return None
+    if id is None and len(partes) >= 2:
+        return "/".join(partes[:-1])
+    return recurso
+
+
 def _codigo_http(mensaje: str) -> int | None:
     m = re.search(r"HTTP (\d{3})", mensaje or "")
     return int(m.group(1)) if m else None
@@ -102,9 +116,15 @@ def traducir_error(api_id: str, mensaje: str, id: str | None = None) -> str:
 
     if codigo == 404:
         donde = f"'{recurso}/{id}'" if id else f"'{recurso}'"
+        listado = _listado_de(recurso, id)
+        if listado is None:
+            return (
+                f"No existe {donde} en Finnegans. Revisa que el nombre este bien escrito "
+                f"con buscar_endpoint."
+            )
         return (
             f"No existe {donde} en Finnegans. Revisa que el codigo este bien escrito; "
-            f"si no lo sabes de memoria, buscalo primero en '{recurso}/list'."
+            f"si no lo sabes de memoria, buscalo primero en '{listado}/list'."
         )
 
     if codigo == 403 and es_escritura:
