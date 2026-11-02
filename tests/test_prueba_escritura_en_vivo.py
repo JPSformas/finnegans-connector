@@ -55,7 +55,9 @@ class Finnegans:
     """Un 'Finnegans' en memoria que atiende lo que el script le pide."""
 
     def __init__(self, plantilla: dict, restos: tuple[str, ...] = (),
-                 falla_en: str | None = None, oculta_en_lista: bool = False) -> None:
+                 falla_en: str | None = None, oculta_en_lista: bool = False,
+                 relleno: int = 0) -> None:
+        self.relleno = relleno  # clientes de relleno para que /list sea grande
         self.oculta_en_lista = oculta_en_lista  # /list no muestra los ZZ (p. ej. inactivos)
         self.borrado = False
         self.plantilla = plantilla
@@ -72,8 +74,10 @@ class Finnegans:
         if self.falla_en == metodo:
             raise FinnegansError(f"Error en {metodo} {path} (HTTP 500): boom")
         if metodo == "GET" and path == "cliente/list":
-            return [{"Codigo": c, "Nombre": r.get("Nombre")} for c, r in self.clientes().items()
-                    if not (self.oculta_en_lista and c.startswith(PREFIJO))]
+            filas = [{"Codigo": c, "Nombre": r.get("Nombre")} for c, r in self.clientes().items()
+                     if not (self.oculta_en_lista and c.startswith(PREFIJO))]
+            return filas + [{"Codigo": f"R{i:05d}", "Nombre": f"Relleno {i} " + "x" * 30}
+                            for i in range(self.relleno)]
         if metodo == "GET" and path == "cliente":
             if id not in self.clientes():
                 raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
@@ -387,7 +391,7 @@ def test_copiar_resto_tambien_saca_los_ids(tmp_path, capsys):
     assert "Id" not in post["ProvinciaItems"][0]
 
 
-def test_plantilla_cambiada_tras_el_alta_aborta_y_borra_solo_el_de_prueba(tmp_path, capsys):
+def test_plantilla_cambiada_tras_el_alta_aborta_sin_borrar_nada(tmp_path, capsys):
     class TocaLaPlantilla(Finnegans):
         def __call__(self, metodo, path, id, params, body):
             r = super().__call__(metodo, path, id, params, body)
@@ -399,8 +403,8 @@ def test_plantilla_cambiada_tras_el_alta_aborta_y_borra_solo_el_de_prueba(tmp_pa
     codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
     assert codigo != 0
     assert "CAMBIÓ" in err and "Nombre" in err and "P01093" in err
-    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
-        ("POST", None), ("DELETE", PREFIJO)]
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [("POST", None)]
+    assert "NO borro nada" in out
 
 
 def test_plantilla_que_desaparece_no_dispara_borrados(tmp_path, capsys):
@@ -525,3 +529,85 @@ def test_regex_de_identidad_y_de_unicos():
     assert script.claves_unicas(
         {"CUIT": "1", "Contactos": [{"EMail": "x", "Dni": "2"}], "Nombre": "n"}
     ) == ["CUIT", "Contactos[].Dni", "Contactos[].EMail"]
+
+
+# ------------------------------------------------------- ronda 2
+
+VO_CON_NUMERO = {
+    "required": ["Codigo", "Nombre", "Numero"],
+    "properties": {**VO_CON_ACTIVO["properties"], "Numero": {"type": "integer"}},
+}
+
+
+class UpsertPorNumero(Finnegans):
+    """Un POST con el mismo Numero que un cliente existente lo pisa (y le cambia el codigo)."""
+
+    def __init__(self, *a, corta_la_respuesta=False, **kw):
+        super().__init__(*a, **kw)
+        self.corta_la_respuesta = corta_la_respuesta
+
+    def __call__(self, metodo, path, id, params, body):
+        if metodo == "POST" and body.get("Numero") == self.plantilla.get("Numero"):
+            self.plantilla = dict(copy.deepcopy(body), FechaAlta="2026-01-01")
+            if self.corta_la_respuesta:
+                raise FinnegansError("No se pudo conectar a Finnegans (cliente): timed out")
+            return "OK"
+        return super().__call__(metodo, path, id, params, body)
+
+
+@pytest.mark.parametrize("corta", [False, True])
+def test_post_que_pisa_la_plantilla_no_dispara_ningun_delete(tmp_path, capsys, corta):
+    fin = UpsertPorNumero(_plantilla(Numero=123), corta_la_respuesta=corta)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin,
+                                        vos={"ClienteVO": VO_CON_NUMERO})
+    assert codigo != 0
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]  # ni DELETE ni PUT
+    assert "NO borro nada" in out and "P01093" in out and PREFIJO in out
+
+
+def test_cleanup_no_borra_si_no_puede_releer_la_plantilla(tmp_path, capsys):
+    class FallaLaLecturaDeLaPlantilla(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            if metodo == "GET" and path == "cliente" and id == "P01093" and self.registros:
+                raise FinnegansError("Error en GET cliente (HTTP 500): boom")
+            return super().__call__(metodo, path, id, params, body)
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys,
+                                        fin=FallaLaLecturaDeLaPlantilla(_plantilla()))
+    assert codigo != 0
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]
+    assert "NO borro nada" in out
+
+
+def test_sin_requeridos_no_copia_la_plantilla_en_silencio(tmp_path, capsys):
+    sin_requeridos = {"required": [], "properties": VO_CON_ACTIVO["properties"]}
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, vos={"ClienteVO": sin_requeridos},
+        restos=(f"{PREFIJO}-VIEJO",))
+    assert codigo != 0
+    assert "--copiar-resto-de-la-plantilla" in err
+    assert escrituras(cli) == []
+
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, vos={"ClienteVO": sin_requeridos},
+        argv=FLAGS + ["--copiar-resto-de-la-plantilla"])
+    assert codigo == 0, out + err
+    assert escrituras(cli)[0].body["Descripcion"] == "no tocar"
+
+
+def test_listado_grande_y_plantilla_enorme_pasan_el_paso_1(tmp_path, capsys):
+    plantilla = _plantilla(Notas="x" * 9000)
+    fin = Finnegans(plantilla, restos=(f"{PREFIJO}-VIEJO",), relleno=300)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out[-1500:] + err
+    # De verdad usaron el formato largo de leer (no el "(N filas)" corto).
+    assert "No la muestro entera" in out
+    assert [(c.metodo, c.id) for c in escrituras(cli)][0] == ("DELETE", f"{PREFIJO}-VIEJO")
+    assert fin.plantilla == plantilla
+
+
+def test_unicos_extendidos():
+    for k in ("CUIL", "NroDoc", "NroDocumento", "Mail", "CorreoElectronico", "Email",
+              "DNI", "CUIT"):
+        assert script.claves_unicas({k: "x"}) == [k]
+    assert script.claves_unicas({"Nombre": "x", "Descripcion": "y"}) == []

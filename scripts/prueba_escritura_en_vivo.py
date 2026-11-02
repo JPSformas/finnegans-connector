@@ -65,7 +65,8 @@ TABLA_VERIFICACION = "zz_prueba_verificacion"
 # modificar la plantilla en vez de crear uno nuevo.
 _CLAVE_IDENTIDAD = re.compile(r"^(?i:id|guid|uuid)$|^(?i:id)[A-Z_]|(?i:_?id)$")
 # Campos que suelen ser unicos en Finnegans (un duplicado rechaza el alta).
-_CLAVE_UNICA = re.compile(r"cuit|documento|email|nroinscripcion|dni", re.IGNORECASE)
+_CLAVE_UNICA = re.compile(
+    r"cuit|cuil|documento|nrodoc|email|mail|correo|nroinscripcion|dni", re.IGNORECASE)
 _INACTIVOS = {"n", "no", "false", "0"}
 
 _NO_EXISTE = "No existe '"
@@ -212,12 +213,20 @@ def armar_alta(plantilla: dict, flag: str, requeridos: list[str] | None = None,
                copiar_resto: bool = False) -> tuple[dict, list[str]]:
     """Body del alta: solo los campos requeridos del swagger tomados de la plantilla.
 
-    Sin lista de requeridos, o con copiar_resto, se parte de toda la plantilla. En
-    todos los casos se sacan las claves de identidad a cualquier profundidad y
-    despues se pisan codigo, nombre y estado (inactivo). Devuelve (body, claves
-    de identidad sacadas).
+    Solo con copiar_resto se parte de toda la plantilla. Sin lista de requeridos y
+    sin copiar_resto se aborta: no se copia la plantilla entera en silencio. En todos
+    los casos se sacan las claves de identidad a cualquier profundidad y despues se
+    pisan codigo, nombre y estado (inactivo). Devuelve (body, claves de identidad
+    sacadas).
     """
-    if copiar_resto or not requeridos:
+    if not requeridos and not copiar_resto:
+        raise ErrorPrueba(
+            "No pude determinar los campos requeridos del alta de cliente (el swagger no "
+            "los lista o no está disponible), así que no sé qué copiar de la plantilla. No "
+            "se escribió nada. Si querés copiar toda la plantilla (siempre sin ids ni "
+            "guids), pasá --copiar-resto-de-la-plantilla."
+        )
+    if copiar_resto:
         origen = plantilla
     else:
         pedidos = {r.lower() for r in requeridos}
@@ -259,10 +268,9 @@ class Prueba:
         self.paso = 0
         self.n_tabla = 0
         self.pendiente_de_borrar = False
-        # Si la plantilla pudo haber sido tocada por el alta, ZZ-PRUEBA-MCP podria ser
-        # la propia plantilla: en ese caso NO se borra nada automaticamente.
-        self.no_borrar = False
         self.plantilla: str | None = None
+        # Foto cruda de la plantilla: la limpieza solo borra si sigue identica.
+        self.foto: dict | None = None
         self.tabla_prueba = ""
 
     # -- entrada/salida ----------------------------------------------------
@@ -346,9 +354,19 @@ class Prueba:
 
     # -- lecturas verificadas -----------------------------------------------
 
+    def _cargada(self, tabla: str) -> bool:
+        """True si la tabla esta en el workspace. Los nombres son nuevos en cada lectura,
+        asi que existir prueba que ESTA lectura cargo datos (el formato del texto de
+        leer cambia segun el tamano y no sirve para esto)."""
+        try:
+            self.workspace.crudo(tabla)
+        except KeyError:
+            return False
+        return True
+
     def leer_registro(self, codigo: str, base_tabla: str, *,
                       puede_no_existir: bool = False) -> tuple[dict | None, str]:
-        """(registro, tabla). Exige que la lectura confirme una carga o el aviso de 'No existe'.
+        """(registro, tabla). Exige que el workspace tenga la carga o que leer diga 'No existe'.
 
         Cualquier otra cosa (un error, un timeout, una lista vacia) es un fallo: no se
         interpreta como 'no existe'. Con puede_no_existir devuelve (None, tabla) ante
@@ -356,7 +374,7 @@ class Prueba:
         """
         tabla = self._tabla_nueva(base_tabla)
         texto = self.llamar("leer", path=RECURSO, id=codigo, tabla=tabla)
-        if f"tabla {tabla} (1 fila" in texto:
+        if self._cargada(tabla):
             registro = _unico(self.workspace.crudo(tabla))
             if registro is None:
                 raise ErrorPrueba(f"'{codigo}' no se leyó como un registro (objeto JSON).")
@@ -383,8 +401,8 @@ class Prueba:
     def restos(self) -> list[str]:
         """Codigos ZZ-PRUEBA-MCP que hay hoy: en cliente/list y por id (solo lectura)."""
         tabla = self._tabla_nueva(TABLA_LISTA)
-        texto = self.llamar("leer", path=f"{RECURSO}/list", tabla=tabla)
-        if f"tabla {tabla} (" not in texto:
+        self.llamar("leer", path=f"{RECURSO}/list", tabla=tabla)
+        if not self._cargada(tabla):
             raise ErrorPrueba(
                 "No pude cargar cliente/list (la respuesta no confirma la carga): no puedo "
                 "saber si quedan registros de prueba."
@@ -415,24 +433,26 @@ class Prueba:
         registro, _ = self.leer_registro(codigo, TABLA_PLANTILLA)
         return registro
 
-    def verificar_plantilla(self, foto: dict) -> None:
-        """La plantilla tiene que seguir igual que antes del alta."""
+    def estado_plantilla(self) -> str | None:
+        """None si la plantilla sigue identica a su foto; si no, que le paso."""
         try:
             ahora, _ = self.leer_registro(self.plantilla, TABLA_PLANTILLA, puede_no_existir=True)
-        except ErrorPrueba:
-            self.no_borrar = True
-            raise
+        except Exception as e:  # noqa: BLE001
+            return f"no pude releerla ({e})"
         if ahora is None:
-            self.no_borrar = True
+            return "YA NO EXISTE con su código"
+        if ahora != self.foto:
+            return f"CAMBIÓ (campos: {_claves_distintas(self.foto, ahora)})"
+        return None
+
+    def verificar_plantilla(self) -> None:
+        """La plantilla tiene que seguir igual que antes del alta."""
+        problema = self.estado_plantilla()
+        if problema is not None:
             raise ErrorPrueba(
-                f"La plantilla '{self.plantilla}' YA NO EXISTE con su código. Revisá a mano, "
-                f"en Finnegans, el cliente '{self.plantilla}' y el cliente '{CODIGO_PRUEBA}' "
-                "(el alta podría haber pisado la plantilla). No se borró nada."
-            )
-        if ahora != foto:
-            raise ErrorPrueba(
-                f"La plantilla '{self.plantilla}' CAMBIÓ después de la prueba (campos: "
-                f"{_claves_distintas(foto, ahora)}). Revisala a mano en Finnegans."
+                f"La plantilla '{self.plantilla}' {problema}. Revisá a mano, en Finnegans, el "
+                f"cliente '{self.plantilla}' y el cliente '{CODIGO_PRUEBA}' (el alta podría "
+                "haberla pisado)."
             )
 
     # -- corrida ----------------------------------------------------------------
@@ -455,7 +475,7 @@ class Prueba:
 
         self.titulo(f"Leer la plantilla '{plantilla}' (solo lectura) y ver el alta de cliente")
         molde = self.leer_plantilla(plantilla)
-        foto = copy.deepcopy(molde)
+        self.foto = copy.deepcopy(molde)
         ver = self.llamar("ver_endpoint", path=RECURSO, metodo="POST")
         flag = campo_activo(molde, ver)
         requeridos = campos_requeridos(ver)
@@ -483,7 +503,8 @@ class Prueba:
         self.pendiente_de_borrar = True
         self.escribir("POST", body=alta)
 
-        self.titulo("Verificar el alta: código, inactivo y plantilla intacta")
+        self.titulo("Verificar el alta: plantilla intacta, código e inactivo")
+        self.verificar_plantilla()  # antes que nada: un alta que pisa la plantilla es lo peor
         creado = self.leer_prueba()
         if not _esta_inactivo(creado, flag):
             raise ErrorPrueba(
@@ -491,7 +512,6 @@ class Prueba:
                 f"{creado.get(_clave(creado, flag.lower(), flag), '<falta>')!r}): se aborta y "
                 "se intenta borrar."
             )
-        self.verificar_plantilla(foto)
 
         self.titulo("Editar con PUT base + cambios")
         texto = self.escribir("PUT", id=CODIGO_PRUEBA, base=self.tabla_prueba,
@@ -531,18 +551,23 @@ class Prueba:
         quedan = self.restos()
         if quedan:
             raise ErrorPrueba(f"Quedaron registros de prueba: {quedan}")
-        self.verificar_plantilla(foto)
+        self.verificar_plantilla()
         self.salida(f"\nTodo en orden: no queda ningún {PREFIJO}* y la plantilla no cambió.")
 
     def _limpiar_tras_fallo(self) -> None:
-        """Si la prueba se corto con el registro creado, intenta borrarlo (solo ZZ-PRUEBA-MCP)."""
+        """Si la prueba se corto con el registro creado, intenta borrarlo (solo ZZ-PRUEBA-MCP).
+
+        Antes relee la plantilla: si ya no esta, cambio o no se puede leer, ZZ-PRUEBA-MCP
+        podria ser la propia plantilla y NO se borra nada.
+        """
         if not self.pendiente_de_borrar:
             return
-        if self.no_borrar:
+        problema = self.estado_plantilla()
+        if problema is not None:
             self.salida(
                 f"\n--- La prueba se cortó y NO borro nada automáticamente: la plantilla "
-                f"'{self.plantilla}' pudo haber sido afectada. Revisá a mano en Finnegans "
-                f"los clientes '{self.plantilla}' y '{CODIGO_PRUEBA}'. ---"
+                f"'{self.plantilla}' {problema}. Revisá a mano en Finnegans los clientes "
+                f"'{self.plantilla}' y '{CODIGO_PRUEBA}'. ---"
             )
             return
         self.salida(f"\n--- La prueba se cortó: intento borrar {CODIGO_PRUEBA} ---")
