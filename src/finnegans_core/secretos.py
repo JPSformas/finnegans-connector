@@ -7,6 +7,7 @@ cualquier traceback que el usuario reenvie. Solo libreria estandar.
 from __future__ import annotations
 
 from typing import Iterable
+from urllib.parse import quote, quote_plus
 
 MASCARA = "***"
 
@@ -20,8 +21,18 @@ class Redactor:
             self.agregar(v)
 
     def agregar(self, valor: str) -> None:
-        if valor:
-            self._valores.add(str(valor))
+        """Registra el valor y sus formas codificadas para URL.
+
+        Las credenciales viajan en el query string, asi que un error que repita
+        la URL las muestra con porcentaje (a+b/c -> a%2Bb%2Fc).
+        """
+        if not valor:
+            return
+        valor = str(valor)
+        self._valores.add(valor)
+        for variante in (quote(valor, safe=""), quote_plus(valor), quote(valor)):
+            if variante != valor:
+                self._valores.add(variante)
 
     def limpiar(self, texto: object) -> str:
         salida = str(texto)

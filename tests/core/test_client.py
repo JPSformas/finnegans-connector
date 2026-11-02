@@ -156,3 +156,52 @@ def test_base_url_invalida_en_request():
     with pytest.raises(FinnegansError) as e:
         c.request("GET", "cliente")
     assert "https://" in str(e.value)
+
+
+def test_secretos_codificados_en_url_tampoco_se_filtran():
+    from urllib.parse import quote, quote_plus
+
+    secreto = "a+b/c=d&e f"
+    variantes = {quote(secreto, safe=""), quote_plus(secreto), quote(secreto)}
+    assert any(v != secreto for v in variantes)
+
+    def _sin_fuga(msg):
+        assert secreto not in msg
+        for v in variantes:
+            assert v not in msg
+        assert "***" in msg
+
+    def h_cuerpo(req):
+        if req.url.path == "/api/oauth/token":
+            return httpx2.Response(200, text="abc")
+        return httpx2.Response(500, text=f"fallo en {quote_plus(secreto)} y {quote(secreto, safe='')}")
+
+    c = _cliente(h_cuerpo, FINNEGANS_CLIENT_SECRET=secreto)
+    with pytest.raises(FinnegansError) as e:
+        c.request("GET", "cliente")
+    _sin_fuga(str(e.value))
+
+    def h_red(req):
+        if req.url.path == "/api/oauth/token":
+            return httpx2.Response(200, text="abc")
+        raise httpx2.ConnectError(f"no conecta {req.url}?client_secret={quote(secreto)}")
+
+    c = _cliente(h_red, FINNEGANS_CLIENT_SECRET=secreto)
+    with pytest.raises(FinnegansError) as e:
+        c.request("GET", "cliente")
+    _sin_fuga(str(e.value))
+
+
+def test_token_con_caracteres_especiales_se_redacta_codificado():
+    from urllib.parse import quote
+
+    tok = "t+k/en=1"
+
+    def h(req):
+        if req.url.path == "/api/oauth/token":
+            return httpx2.Response(200, text=tok)
+        return httpx2.Response(500, text=f"ACCESS_TOKEN={quote(tok, safe='')}")
+
+    with pytest.raises(FinnegansError) as e:
+        _cliente(h).request("GET", "cliente")
+    assert tok not in str(e.value) and quote(tok, safe="") not in str(e.value)
