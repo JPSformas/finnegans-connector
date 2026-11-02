@@ -25,6 +25,12 @@ _NOTA_MAX_CHARS = 500
 # Reserva para el encabezado/pie ("Filas 1–37 de 4150. Para seguir: ...").
 _RESERVA_MENSAJE = 250
 _ERROR_MAX_CHARS = 1500
+# Filas que se traen por pagina de consultar: cada fila ocupa al menos 5
+# caracteres, asi que en el presupuesto nunca entran mas que estas.
+_PAGINA_MAX_FILAS = 2000
+# Tope de filas de un export: una consulta mal armada (un producto cartesiano,
+# FROM range(100000000)) no puede quedarse con toda la memoria.
+MAX_FILAS_EXPORT = 1_000_000
 
 
 class ConsultaInvalida(Exception):
@@ -222,8 +228,8 @@ class Workspace:
 
     # -- consulta ---------------------------------------------------------
 
-    def ejecutar(self, sql: str) -> tuple[list[str], list[tuple]]:
-        """Ejecuta una sola consulta de lectura y devuelve (columnas, filas)."""
+    def _sentencia_de_lectura(self, sql: str) -> str:
+        """Texto de la unica sentencia, si es de lectura; si no, ConsultaInvalida."""
         try:
             sentencias = duckdb.extract_statements(sql)
         except duckdb.Error as e:
@@ -238,6 +244,20 @@ class Workspace:
                 "Solo se permiten consultas de lectura (SELECT, WITH, SHOW, "
                 "DESCRIBE, SUMMARIZE). No se puede modificar ni leer archivos."
             )
+        return sentencias[0].query.rstrip().rstrip(";").rstrip()
+
+    def _envolver(self, sentencia: str, afuera: str, al_final: str = "") -> str:
+        """`afuera (sentencia) AS _q al_final`, revalidado como una sola lectura.
+
+        Los saltos de linea evitan que un comentario '--' al final se coma el
+        parentesis. La sentencia ya paso el chequeo; el SQL envuelto se vuelve a
+        chequear para que el envoltorio nunca deje pasar otra cosa.
+        """
+        envuelto = f"{afuera} (\n{sentencia}\n) AS _q{al_final}"
+        self._sentencia_de_lectura(envuelto)
+        return envuelto
+
+    def _correr(self, sql: str) -> tuple[list[str], list[tuple]]:
         try:
             cur = self._con.execute(sql)
             columnas = [d[0] for d in cur.description]
@@ -245,10 +265,34 @@ class Workspace:
         except duckdb.Error as e:
             raise ConsultaInvalida(f"La consulta falló: {self._msg(e)}") from e
 
+    def ejecutar_con_tope(
+        self, sql: str, tope: int | None = None
+    ) -> tuple[list[str], list[tuple], bool]:
+        """(columnas, filas, hay_mas): a lo sumo `tope` filas (por defecto MAX_FILAS_EXPORT)."""
+        tope = MAX_FILAS_EXPORT if tope is None else max(int(tope), 0)
+        sentencia = self._sentencia_de_lectura(sql)
+        columnas, filas = self._correr(
+            self._envolver(sentencia, "SELECT * FROM", f" LIMIT {tope + 1}")
+        )
+        return columnas, filas[:tope], len(filas) > tope
+
+    def ejecutar(self, sql: str) -> tuple[list[str], list[tuple]]:
+        """Ejecuta una sola consulta de lectura y devuelve (columnas, filas).
+
+        Trae a lo sumo MAX_FILAS_EXPORT filas; ejecutar_con_tope dice si habia mas.
+        """
+        columnas, filas, _ = self.ejecutar_con_tope(sql)
+        return columnas, filas
+
     def consultar(self, sql: str, desde: int = 0) -> str:
-        """Resultado paginado como tabla markdown que cabe en el presupuesto."""
-        columnas, filas = self.ejecutar(sql)
-        total = len(filas)
+        """Resultado paginado como tabla markdown que cabe en el presupuesto.
+
+        El total sale de un count(*) y solo se trae la pagina pedida: el
+        resultado completo nunca se carga en memoria.
+        """
+        sentencia = self._sentencia_de_lectura(sql)
+        _, conteo = self._correr(self._envolver(sentencia, "SELECT count(*) FROM"))
+        total = int(conteo[0][0])
         desde = max(desde, 0)
         if total == 0:
             return "La consulta devolvió 0 filas."
@@ -257,8 +301,11 @@ class Workspace:
                 f"Desde la fila {desde} no hay más filas: "
                 f"la consulta devolvió {total}."
             )
+        columnas, filas = self._correr(self._envolver(
+            sentencia, "SELECT * FROM", f" LIMIT {_PAGINA_MAX_FILAS} OFFSET {desde}"
+        ))
         tabla, n = formatear_tabla(
-            columnas, filas[desde:], RESPUESTA_MAX_CHARS - _RESERVA_MENSAJE
+            columnas, filas, RESPUESTA_MAX_CHARS - _RESERVA_MENSAJE
         )
         hasta = desde + n
         if len(tabla) > RESPUESTA_MAX_CHARS - _RESERVA_MENSAJE:
@@ -273,4 +320,8 @@ class Workspace:
         encabezado = f"Filas {desde + 1}–{hasta} de {total}."
         if hasta < total:
             encabezado += f" Para seguir: consultar(sql, desde={hasta})"
+            return (
+                f"{encabezado}\n\n{tabla}\n\n"
+                "Nota: agregá ORDER BY para paginar de forma estable."
+            )
         return f"{encabezado}\n\n{tabla}"

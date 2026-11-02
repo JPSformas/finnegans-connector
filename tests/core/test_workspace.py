@@ -392,3 +392,70 @@ def test_error_de_carga_se_redacta_antes_de_cortar(monkeypatch):
         assert "SECRETO-Q" not in str(exc.value)
     finally:
         w.cerrar()
+
+
+# ---------------------------------------------- consultas que no caben en memoria
+
+
+def test_consultar_10_millones_de_filas_trae_solo_la_pagina(ws):
+    import time
+
+    t0 = time.perf_counter()
+    out = ws.consultar("SELECT range AS n FROM range(10000000)")
+    sig = ws.consultar("SELECT range AS n FROM range(10000000) ORDER BY n DESC",
+                       desde=9_999_990)
+    duracion = time.perf_counter() - t0
+    assert duracion < 5, duracion
+    assert len(out) <= RESPUESTA_MAX_CHARS and len(sig) <= RESPUESTA_MAX_CHARS
+    assert "de 10000000" in out and "desde=" in out
+    assert "agregá ORDER BY para paginar de forma estable" in out
+    # La ultima pagina (de un ORDER BY) respeta el orden y el desplazamiento.
+    assert "Filas 9999991–10000000 de 10000000." in sig
+    assert "| 9 |" in sig and "| 0 |" in sig and "| 10 |" not in sig
+    assert "agregá ORDER BY" not in sig  # no hay pagina siguiente
+
+
+def test_consultar_producto_cartesiano_no_se_trae_entero(ws):
+    ws.cargar("t", [{"a": i} for i in range(3000)])
+    out = ws.consultar("SELECT x.a, y.a AS b FROM t x, t y")  # 9 millones de filas
+    assert "de 9000000" in out and len(out) <= RESPUESTA_MAX_CHARS
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1 AS a;",
+    "SELECT 1 AS a -- comentario al final",
+    "SELECT 1 AS a /* ) ; DROP TABLE t; -- */",
+    "  FROM t  ;  ",
+])
+def test_el_envoltorio_respeta_punto_y_coma_y_comentarios(ws, sql):
+    ws.cargar("t", [{"a": 1}])
+    assert "de 1" in ws.consultar(sql)
+    assert "de 1" in ws.consultar("SELECT * FROM t")
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1) AS _q; DROP TABLE t; SELECT (1",
+    "SELECT * FROM t) AS _q; DROP TABLE t; --",
+])
+def test_el_envoltorio_no_deja_pasar_otra_sentencia(ws, sql):
+    ws.cargar("t", [{"a": 1}])
+    with pytest.raises(ConsultaInvalida):
+        ws.consultar(sql)
+    with pytest.raises(ConsultaInvalida):
+        ws.ejecutar(sql)
+    assert "de 1" in ws.consultar("SELECT * FROM t")
+
+
+def test_ejecutar_con_tope_avisa_si_hay_mas(ws):
+    cols, filas, hay_mas = ws.ejecutar_con_tope("SELECT range AS n FROM range(10)", tope=4)
+    assert cols == ["n"] and filas == [(0,), (1,), (2,), (3,)] and hay_mas is True
+    cols, filas, hay_mas = ws.ejecutar_con_tope("SELECT range AS n FROM range(4)", tope=4)
+    assert len(filas) == 4 and hay_mas is False
+
+
+def test_ejecutar_tiene_un_tope_de_un_millon(ws):
+    from finnegans_core import workspace as modulo
+
+    assert modulo.MAX_FILAS_EXPORT == 1_000_000
+    _, filas, hay_mas = ws.ejecutar_con_tope("SELECT range FROM range(1000001)")
+    assert len(filas) == 1_000_000 and hay_mas is True

@@ -79,3 +79,22 @@ def test_tools_del_manifest_son_las_del_servidor():
 def test_manifest_no_lleva_valores_de_claves():
     texto = (RAIZ / "manifest.json").read_text(encoding="utf-8")
     assert not re.search(r"(?i)bearer|secret\s*[:=]\s*\S{12,}", texto)
+
+
+def test_version_igual_en_manifest_pyproject_y_servidor():
+    import tomllib
+
+    from mcp.client import Client
+
+    from finnegans_mcp import __version__
+
+    pyproject = tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))
+    assert MANIFEST["version"] == pyproject["project"]["version"] == __version__ == "1.0.0"
+
+    async def _server_info():
+        async with Client(crear_servidor(Settings())) as cliente:
+            return cliente.server_info
+
+    info = asyncio.run(_server_info())
+    assert info.name == "finnegans"
+    assert info.version == __version__

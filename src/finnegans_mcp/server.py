@@ -31,6 +31,7 @@ from finnegans_core.presupuesto import RESPUESTA_MAX_CHARS, nombre_tabla, resumi
 from finnegans_core.secretos import Redactor
 from finnegans_core.workspace import ConsultaInvalida, Resumen, Workspace
 
+from finnegans_mcp import __version__
 from finnegans_mcp.escritura import armar_body, diff
 from finnegans_mcp.instrucciones import INSTRUCCIONES
 
@@ -295,7 +296,7 @@ def crear_servidor(
     def responder(texto: object, como_seguir: str = "Pedí algo más acotado.") -> str:
         return _ajustar(limpiar(texto), como_seguir)
 
-    server = MCPServer("finnegans", instructions=INSTRUCCIONES)
+    server = MCPServer("finnegans", instructions=INSTRUCCIONES, version=__version__)
 
     # ------------------------------------------------------- buscar_endpoint
 
@@ -629,7 +630,7 @@ def crear_servidor(
             return responder(f"No sé exportar en formato '{formato}': usá 'xlsx' o 'csv'.")
         try:
             with candado:
-                columnas, filas = workspace.ejecutar(sql)
+                columnas, filas, hay_mas = workspace.ejecutar_con_tope(sql)
             carpeta = (
                 Path(settings.export_dir) if settings.export_dir
                 else Path.home() / "Documents" / "Finnegans"
@@ -640,10 +641,14 @@ def crear_servidor(
             return responder(f"{e}\nPara ver qué tablas hay cargadas: consultar(\"SHOW TABLES\").")
         except Exception as e:  # noqa: BLE001
             return responder(error(e))
-        return responder(
-            f"Listo: exporté {len(filas)} fila{'s' if len(filas) != 1 else ''} "
-            f"a {ruta}"
-        )
+        texto = f"Listo: exporté {len(filas)} fila{'s' if len(filas) != 1 else ''} a {ruta}"
+        if hay_mas:
+            texto += (
+                f"\nOjo: la consulta devuelve más de {len(filas)} filas y el máximo por "
+                "exportación es ese, así que el archivo tiene solo las primeras. Acotala "
+                "con WHERE (por ejemplo por fechas) y exportá en partes."
+            )
+        return responder(texto)
 
     # -------------------------------------------------------------- escribir
 

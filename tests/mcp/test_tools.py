@@ -254,6 +254,20 @@ async def test_exportar_sin_nombre_usa_timestamp(armar):
     assert archivos[0].name in out
 
 
+async def test_exportar_con_mas_filas_que_el_tope_lo_dice(armar, monkeypatch):
+    from finnegans_core import workspace as modulo
+
+    monkeypatch.setattr(modulo, "MAX_FILAS_EXPORT", 100)
+    env = armar(lambda *a: CLIENTES)
+    await env.llamar("leer", path="cliente/list")
+    out = await env.llamar("exportar", sql="SELECT Codigo FROM cliente ORDER BY Codigo",
+                           formato="csv", nombre="tope")
+    ruta = Path(env.settings.export_dir) / "tope.csv"
+    assert len(ruta.read_text(encoding="utf-8-sig").splitlines()) == 101  # encabezado + 100
+    assert "exporté 100 filas" in out
+    assert "más de 100 filas" in out and "WHERE" in out
+
+
 async def test_exportar_formato_invalido(armar):
     env = armar(lambda *a: CLIENTES[:3])
     await env.llamar("leer", path="cliente/list")
