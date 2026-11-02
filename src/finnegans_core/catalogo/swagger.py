@@ -180,8 +180,11 @@ class SwaggerCatalog:
         except (httpx2.HTTPError, httpx2.InvalidURL, OSError, ValueError) as e:
             raise SwaggerError(self.redactor.limpiar(prefijo + str(e))) from None
         if resp.status_code >= 400:
+            # Se redacta el cuerpo entero antes de cortarlo: una key partida por
+            # el corte ya no se reconoce y su primera parte quedaria visible.
+            detalle = self.redactor.limpiar(resp.text)[:200]
             raise SwaggerError(self.redactor.limpiar(
-                f"{prefijo}HTTP {resp.status_code}: {resp.text[:200]}"))
+                f"{prefijo}HTTP {resp.status_code}: {detalle}"))
         try:
             data = resp.json()
         except ValueError:

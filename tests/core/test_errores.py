@@ -156,3 +156,55 @@ class TestApiInexistente(unittest.TestCase):
     def test_no_filtra_el_error_crudo(self):
         self.assertNotIn("501", self.msg)
         self.assertNotIn("Not Implemented", self.msg)
+
+
+class TestCredencialesYPermisos(unittest.TestCase):
+    def test_401_nombra_los_campos_del_formulario_y_no_variables(self):
+        msg = traducir_error("cliente", CRUDO_401)
+        self.assertIn("Client ID de Finnegans", msg)
+        self.assertIn("Client secret de Finnegans", msg)
+        self.assertIn("configuracion de la extension", msg)
+        self.assertNotIn("FINNEGANS_", msg)
+
+    def test_403_en_lectura_tambien_son_credenciales(self):
+        crudo = 'Error en GET cliente (HTTP 403): {"error":"Forbidden"}'
+        msg = traducir_error("cliente", crudo)
+        self.assertIn("credenciales", msg.lower())
+        self.assertNotIn("FINNEGANS_", msg)
+
+    def test_403_en_escritura_es_falta_de_permiso_no_credenciales(self):
+        for metodo in ("POST", "PUT", "PATCH", "DELETE"):
+            crudo = f'Error en {metodo} cliente (HTTP 403): {{"error":"Forbidden"}}'
+            msg = traducir_error("cliente", crudo, id="C1")
+            self.assertIn("permiso", msg.lower(), metodo)
+            self.assertIn(metodo, msg)
+            self.assertIn("'cliente'", msg)
+            self.assertNotIn("rechazo las credenciales", msg)
+            self.assertNotIn("FINNEGANS_", msg)
+
+
+class TestDetalleDel500EnEscrituras(unittest.TestCase):
+    RECHAZO = "No se puede mezclar Convenio Multilateral con Local en ControlImpositivo1"
+
+    def test_500_en_escritura_muestra_lo_que_dijo_la_api(self):
+        crudo = f'Error en PUT cliente (HTTP 500): {{"error":"{self.RECHAZO}"}}'
+        msg = traducir_error("cliente", crudo, id="C1")
+        self.assertIn("Finnegans no pudo procesar la operacion sobre 'cliente'", msg)
+        self.assertIn(self.RECHAZO, msg)
+        self.assertIn("La API respondio", msg)
+
+    def test_500_en_escritura_corta_el_detalle_a_300(self):
+        crudo = "Error en POST cliente (HTTP 500): " + ("q" * 5000)
+        msg = traducir_error("cliente", crudo)
+        detalle = msg.split("La API respondio: ", 1)[1]
+        self.assertLessEqual(len(detalle.rstrip("…")), 300)
+        self.assertLess(len(msg), 800)
+
+    def test_500_en_lectura_no_agrega_el_detalle(self):
+        msg = traducir_error("reports/MOVINT", CRUDO_500)
+        self.assertNotIn("La API respondio", msg)
+        self.assertNotIn("Internal Server Error", msg)
+
+    def test_500_en_escritura_sin_cuerpo_no_agrega_nada(self):
+        msg = traducir_error("cliente", "Error en DELETE cliente (HTTP 500): ")
+        self.assertNotIn("La API respondio", msg)

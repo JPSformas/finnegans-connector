@@ -570,3 +570,18 @@ def test_la_key_no_aparece_en_ninguna_salida(red, cat):
         assert "abc123" not in json.dumps(op.__dict__, default=str)
     assert KEY not in json.dumps([c.__dict__ for c in cat.buscar("cliente")])
     assert "abc123" not in json.dumps(cat.campo("cliente", "PUT", "ProvinciaItems"))
+
+
+def test_error_http_del_swagger_redacta_antes_de_cortar():
+    key = "QZW9-corte-key-7Hk2Lm5Np8Rt"
+    # La key empieza 10 caracteres antes del corte del detalle (200).
+    cuerpo = "z" * 190 + key + " fin"
+    cat = SwaggerCatalog(
+        _settings(FINNEGANS_SWAGGER_KEY=key),
+        http=httpx2.Client(transport=httpx2.MockTransport(
+            lambda r: httpx2.Response(500, text=cuerpo))),
+    )
+    with pytest.raises(SwaggerError) as e:
+        cat.spec()
+    for k in range(3, len(key) + 1):
+        assert key[:k] not in str(e.value), k

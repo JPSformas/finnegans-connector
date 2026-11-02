@@ -205,3 +205,57 @@ def test_token_con_caracteres_especiales_se_redacta_codificado():
     with pytest.raises(FinnegansError) as e:
         _cliente(h).request("GET", "cliente")
     assert tok not in str(e.value) and quote(tok, safe="") not in str(e.value)
+
+
+# Secreto propio de estos tests: ningun prefijo suyo aparece por casualidad
+# en los textos fijos de los mensajes.
+SECRETO_CORTE = "QZW9-corte-secreto-7Hk2Lm5Np8Rt"
+
+
+def _sin_prefijo(msg, secreto=SECRETO_CORTE):
+    for k in range(3, len(secreto) + 1):
+        assert secreto[:k] not in msg, (k, msg)
+
+
+def test_error_de_token_redacta_antes_de_cortar():
+    # El secreto empieza 10 caracteres antes del corte del detalle (300).
+    cuerpo = "x" * 290 + SECRETO_CORTE + " fin"
+    c = _cliente(lambda req: httpx2.Response(401, text=cuerpo),
+                 FINNEGANS_CLIENT_SECRET=SECRETO_CORTE)
+    with pytest.raises(FinnegansAuthError) as e:
+        c.token()
+    _sin_prefijo(str(e.value))
+
+
+def test_error_de_request_redacta_antes_de_cortar():
+    # El secreto empieza 10 caracteres antes del corte del detalle (400).
+    cuerpo = "y" * 390 + SECRETO_CORTE + " fin"
+
+    def h(req):
+        if req.url.path == "/api/oauth/token":
+            return httpx2.Response(200, text="abc")
+        return httpx2.Response(500, text=cuerpo)
+
+    with pytest.raises(FinnegansError) as e:
+        _cliente(h, FINNEGANS_CLIENT_SECRET=SECRETO_CORTE).request("GET", "cliente")
+    _sin_prefijo(str(e.value))
+
+
+@pytest.mark.parametrize("codigo", [301, 302, 303, 307, 308])
+def test_una_redireccion_en_una_escritura_es_error(codigo):
+    def h(req):
+        if req.url.path == "/api/oauth/token":
+            return httpx2.Response(200, text="abc")
+        return httpx2.Response(codigo, headers={"Location": "https://otro.example/x"},
+                               text="movido")
+
+    with pytest.raises(FinnegansError) as e:
+        _cliente(h).request("PUT", "cliente", id="C1", body={"Codigo": "C1"})
+    assert f"HTTP {codigo}" in str(e.value)
+
+
+def test_una_redireccion_al_pedir_el_token_es_error():
+    c = _cliente(lambda req: httpx2.Response(302, headers={"Location": "https://otro.example"},
+                                             text="TOKEN-FALSO"))
+    with pytest.raises(FinnegansAuthError):
+        c.token()

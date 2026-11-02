@@ -37,6 +37,14 @@ class FinnegansClient:
         self._token_ts = 0.0
 
     # ---------------------------------------------------------------- util
+    def _detalle(self, texto: str, largo: int) -> str:
+        """Cuerpo de la respuesta redactado entero y recien despues cortado.
+
+        Cortar antes deja un secreto partido al medio que el Redactor ya no
+        reconoce, y su primera parte quedaria visible.
+        """
+        return self.redactor.limpiar(texto)[:largo]
+
     def _base(self, exc: type[FinnegansError]) -> str:
         base = (self.settings.base_url or "").strip().rstrip("/")
         if not base.lower().startswith(("http://", "https://")):
@@ -64,11 +72,12 @@ class FinnegansClient:
             raise FinnegansAuthError(
                 self.redactor.limpiar(f"No se pudo conectar a Finnegans: {e}")
             ) from None
-        if resp.status_code >= 400:
+        # Las redirecciones no se siguen: un 3xx tampoco trae un token.
+        if resp.status_code >= 300:
             raise FinnegansAuthError(
                 self.redactor.limpiar(
                     f"Fallo la autenticacion (HTTP {resp.status_code}). Revisa el "
-                    f"Client ID y el Client secret. Detalle: {resp.text[:300]}"
+                    f"Client ID y el Client secret. Detalle: {self._detalle(resp.text, 300)}"
                 )
             )
         raw = resp.text.strip()
@@ -127,10 +136,13 @@ class FinnegansClient:
         if resp.status_code in (401, 403) and reintentar:
             self.token(forzar=True)
             return self._request(metodo, path, id, params, body, reintentar=False)
-        if resp.status_code >= 400:
+        # Las redirecciones no se siguen: un 3xx no es una respuesta aceptada,
+        # y en una escritura no se puede informar como hecha.
+        if resp.status_code >= 300:
             raise FinnegansError(
                 self.redactor.limpiar(
-                    f"Error en {metodo} {path} (HTTP {resp.status_code}): {resp.text[:400]}"
+                    f"Error en {metodo} {path} (HTTP {resp.status_code}): "
+                    f"{self._detalle(resp.text, 400)}"
                 )
             )
         try:
