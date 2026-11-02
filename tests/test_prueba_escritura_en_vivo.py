@@ -915,6 +915,42 @@ def test_resto_que_el_listado_nombra_de_prueba_pero_al_leerlo_no_se_borra(tmp_pa
     assert "Cliente real SA" in err and "2950" in err and NO_VOLVER in err
 
 
+@pytest.mark.parametrize("nombre", [
+    "ZZ PRUEBA MCP", "ZZ PRUEBA MCP - borrar ya", "ZZ PRUEBA MCP-clientes reales"])
+def test_resto_numerico_con_nombre_que_solo_empieza_con_el_prefijo_no_se_borra(
+        tmp_path, capsys, nombre):
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin, nombre=nombre)
+    antes = copy.deepcopy(fin.registros)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert escrituras(cli) == []
+    assert fin.registros == antes
+    assert "2950" in err and NO_VOLVER in err
+
+
+@pytest.mark.parametrize("nombre", [
+    script.NOMBRE_ALTA, script.NOMBRE_EDITADO, script.NOMBRE_BODY])
+def test_resto_numerico_con_cada_nombre_exacto_de_la_prueba_se_borra(tmp_path, capsys, nombre):
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin, nombre=nombre)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out[-3000:] + err
+    assert escrituras(cli)[0].metodo == "DELETE" and escrituras(cli)[0].id == "2950"
+
+
+def test_plantilla_entre_los_restos_aborta_sin_escribir(tmp_path, capsys):
+    # Una corrida anterior pisó la plantilla: ahora se llama como el alta y está
+    # inactiva, así que la búsqueda de restos por nombre la encuentra.
+    fin = AsignaCodigo(_plantilla(Nombre=script.NOMBRE_ALTA, Activo=False))
+    antes = copy.deepcopy(fin.clientes())
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert escrituras(cli) == []
+    assert fin.clientes() == antes
+    assert "La plantilla 'P01093' aparece entre los restos" in err and NO_VOLVER in err
+
+
 def test_guarda_rechaza_un_codigo_numerico_sin_confirmar(tmp_path):
     settings = fakes.ajustes(tmp_path)
     fin = AsignaCodigo(_plantilla())
@@ -968,6 +1004,21 @@ def test_guarda_rechaza_un_codigo_numerico_sin_confirmar(tmp_path):
     ('Respuesta de la API: {"ProvinciaID": "BSAS", "message": "created"}', None),
     ("Respuesta de la API: OK", None),
     ("POST cliente: listo, Finnegans aceptó la escritura.", None),
+    # La respuesta repetida no aporta el codigo: el aviso va en su propia linea.
+    ('POST cliente: listo.\nRespuesta de la API: {"message":"le asignó \'301\'","id":"2956"}',
+     "2956"),
+    ('Respuesta de la API: {"message": "Finnegans le asignó al registro nuevo el código '
+     '\'301\'."}', None),
+    ("x Finnegans le asignó al registro nuevo el código '301'.", None),
+    # Como _id_asignado del servidor: solo 'id' de primer nivel de un objeto.
+    ('Respuesta de la API: [{"id":"9"}]', None),
+    ('Respuesta de la API: {"data":{"id":"5"}}', None),
+    ('Respuesta de la API: {"data":{"id":"5"},"Id":"7"}', "7"),
+    ('Respuesta de la API: [{"id":"9", "detalle": "xxxx…', None),
+    ('Respuesta de la API: {"data": {"id": "5", "detalle": "xxxx…', None),
+    ('Respuesta de la API: {"data": {"id": "5"}, "msg": "a\\"id\\": 3", "id": 42, "x": "…',
+     "42"),
+    ('Respuesta de la API: {"msg": "id", "otro": "xxx…', None),
 ])
 def test_codigo_asignado_sale_de_la_salida_de_escribir(texto, esperado):
     assert script.codigo_asignado(texto) == esperado

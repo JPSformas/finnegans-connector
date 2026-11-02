@@ -74,6 +74,8 @@ NOMBRE_PREFIJO = "ZZ PRUEBA MCP"
 NOMBRE_ALTA = "ZZ PRUEBA MCP - borrar"
 NOMBRE_EDITADO = "ZZ PRUEBA MCP - editado"
 NOMBRE_BODY = "ZZ PRUEBA MCP - body completo"
+# Un resto con codigo sin el prefijo solo se borra si se llama exactamente asi.
+_NOMBRES_PRUEBA = (NOMBRE_ALTA, NOMBRE_EDITADO, NOMBRE_BODY)
 RECURSO = "cliente"
 # Tope de restos a borrar: mas que esto es raro y se aborta en vez de borrar.
 MAX_RESTOS = 20
@@ -109,9 +111,13 @@ _AVISOS_FALLO = ("falló", "No se envió", "No sé si", _SIN_RELECTURA)
 
 # Lo que escribir dice tras un alta: "Finnegans ignoró el Codigo enviado 'A' y le
 # asignó 'X'" o "Finnegans le asignó al registro nuevo el código 'X'".
-_RE_ASIGNADO = re.compile(r"le asignó (?:al registro nuevo el código )?'([^']+)'")
+# Anclado al comienzo de su propia linea: una respuesta de la API repetida en la
+# linea "Respuesta de la API: ..." no puede aportar el codigo.
+_RE_ASIGNADO = re.compile(
+    r"^Finnegans (?:ignoró el Codigo enviado '[^'\n]*' y le asignó|"
+    r"le asignó al registro nuevo el código) '([^'\n]+)'", re.MULTILINE)
 _RE_RESPUESTA = re.compile(r"^Respuesta de la API: (.*)$", re.MULTILINE)
-_RE_ID_JSON = re.compile(r'"id"\s*:\s*(?:"([^"]*)"|(-?\d+))', re.IGNORECASE)
+_RE_VALOR_ID = re.compile(r'\s*:\s*(?:"([^"\\]*)"|(-?\d+))')
 
 _FLAGS_ACTIVO = ("activo",)
 # Valor "activo" de un campo de texto -> el que lo deja inactivo.
@@ -324,8 +330,12 @@ def _id_de(datos: Any) -> str | None:
 def codigo_asignado(texto: str) -> str | None:
     """Codigo que Finnegans le asigno al alta, segun la salida de escribir.
 
-    Primero el aviso de escribir ("le asignó 'X'"); si no esta, el "id" de la linea
-    "Respuesta de la API: {...}" (que puede venir cortada con …). None si no hay.
+    Primero el aviso de escribir, en su propia linea ("Finnegans ... le asignó 'X'");
+    si no esta, el "id" de la linea "Respuesta de la API: {...}" con la misma regla
+    que escribir: solo la clave 'id' del objeto de primer nivel (sin importar
+    mayusculas), nunca un id anidado ni el de una lista. Si la linea vino cortada
+    con … y no se puede parsear, se busca esa clave en el primer nivel del texto.
+    None si no hay.
     """
     m = _RE_ASIGNADO.search(texto or "")
     if m and m.group(1).strip():
@@ -334,17 +344,49 @@ def codigo_asignado(texto: str) -> str | None:
         try:
             datos = json.loads(linea)
         except ValueError:
-            datos = None
-        if isinstance(datos, dict):
+            asignado = _id_de_primer_nivel(linea)
+        else:
             asignado = _id_de(datos)
-            if asignado:
-                return asignado
+        if asignado:
+            return asignado
+    return None
+
+
+def _id_de_primer_nivel(texto: str) -> str | None:
+    """El valor de la clave 'id' del objeto de primer nivel de un JSON cortado.
+
+    Recorre el texto contando llaves y corchetes (fuera de los strings): solo mira
+    las claves de profundidad 1 de un objeto. Una lista o un id anidado no cuentan.
+    """
+    texto = texto.strip()
+    if not texto.startswith("{"):
+        return None
+    profundidad = 0
+    i = 0
+    while i < len(texto):
+        c = texto[i]
+        if c == '"':
+            fin = i + 1
+            while fin < len(texto) and texto[fin] != '"':
+                fin += 2 if texto[fin] == "\\" else 1
+            if fin >= len(texto):
+                return None
+            cadena = texto[i + 1:fin]
+            if profundidad == 1 and cadena.lower() == "id":
+                m = _RE_VALOR_ID.match(texto, fin + 1)
+                if m:
+                    valor = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
+                    if valor:
+                        return valor
+            i = fin + 1
             continue
-        m = _RE_ID_JSON.search(linea)
-        if m:
-            asignado = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
-            if asignado:
-                return asignado
+        if c in "{[":
+            profundidad += 1
+        elif c in "}]":
+            profundidad -= 1
+            if profundidad <= 0:
+                return None
+        i += 1
     return None
 
 
@@ -595,8 +637,18 @@ class Prueba:
         Un resto que no se llama 'ZZ PRUEBA MCP...' puede ser un cliente real (por
         ejemplo, la plantilla pisada por un alta anterior): no se borra. Un resto con
         codigo numerico (encontrado por nombre) ademas tiene que estar inactivo; recien
-        entonces la guarda deja borrarlo.
+        entonces la guarda deja borrarlo, y su nombre tiene que ser exactamente uno de
+        los que pone la prueba (no basta con el prefijo). La plantilla nunca es un resto.
         """
+        if self.plantilla is not None:
+            pisada = [c for c in restos if _normal(c) == _normal(self.plantilla)]
+            if pisada:
+                raise ErrorPrueba(
+                    f"La plantilla '{self.plantilla}' aparece entre los restos de prueba "
+                    "(tiene nombre de prueba: una corrida anterior pudo pisarla). No la "
+                    "borro y no se escribió nada. Revisá a mano, en Finnegans, el cliente "
+                    f"'{self.plantilla}'. {NO_VOLVER_A_CORRER}"
+                )
         for codigo in restos:
             registro, _ = self.leer_registro(codigo, TABLA_VERIFICACION)
             nombre = registro.get(_clave(registro, "nombre", "Nombre"))
@@ -609,6 +661,14 @@ class Prueba:
                 )
             if codigo.startswith(PREFIJO):
                 continue
+            if nombre not in _NOMBRES_PRUEBA:
+                raise ErrorPrueba(
+                    f"El resto '{codigo}' se llama {nombre!r}: empieza con "
+                    f"'{NOMBRE_PREFIJO}' pero no es ninguno de los nombres que pone la "
+                    f"prueba ({', '.join(repr(n) for n in _NOMBRES_PRUEBA)}), y su código "
+                    "no tiene el prefijo: puede ser un cliente real y no lo borro. No se "
+                    f"escribió nada. Revisalo a mano en Finnegans. {NO_VOLVER_A_CORRER}"
+                )
             flag = next((k for k in registro if str(k).lower() in _FLAGS_ACTIVO), "Activo")
             if not _esta_inactivo(registro, flag):
                 raise ErrorPrueba(
