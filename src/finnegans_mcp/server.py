@@ -129,6 +129,30 @@ def _mismo_codigo(a: Any, b: Any) -> bool:
     return str(a).strip().casefold() == str(b).strip().casefold()
 
 
+def _id_asignado(respuesta: Any) -> str | None:
+    """Codigo que Finnegans devuelve en 'id' tras un alta ({"id": "2956", ...}).
+
+    En un POST Finnegans ignora el Codigo del body y asigna el suyo: lo
+    devuelve en 'id' (la clave puede venir con otra capitalizacion).
+    """
+    if not isinstance(respuesta, dict):
+        return None
+    for k, v in respuesta.items():
+        if str(k).lower() != "id" or isinstance(v, (dict, list, bool)) or v is None:
+            continue
+        texto = str(v).strip()
+        if texto:
+            return texto
+    return None
+
+
+def _id_texto(id: str | int | None) -> str | None:
+    """El codigo como texto: Claude a veces lo manda como numero (id=2956)."""
+    if id is None:
+        return None
+    return str(id)
+
+
 def _es_corte_de_conexion(e: BaseException) -> bool:
     """Error de transporte (timeout, conexion cortada): la API no llego a contestar."""
     return (
@@ -562,10 +586,11 @@ def crear_servidor(
     )
     def leer_tool(
         path: str,
-        id: str | None = None,
+        id: str | int | None = None,
         params: dict | None = None,
         tabla: str | None = None,
     ) -> str:
+        id = _id_texto(id)
         try:
             datos = client.request("GET", path, id=id, params=params)
         except Exception as e:  # noqa: BLE001
@@ -748,12 +773,13 @@ def crear_servidor(
     def escribir_tool(
         metodo: str,
         path: str,
-        id: str | None = None,
+        id: str | int | None = None,
         body: dict | None = None,
         base: str | None = None,
         cambios: dict | None = None,
         params: dict | None = None,
     ) -> str:
+        id = _id_texto(id)
         estado = {"enviado": False}
         try:
             return _escribir(estado, metodo, path, id, body, base, cambios, params)
@@ -853,6 +879,17 @@ def crear_servidor(
             return responder("\n".join(lineas))
         if tipo != "entidad":
             return responder("\n".join(lineas))
+
+        asignado = _id_asignado(respuesta) if m == "POST" else None
+        if asignado:
+            if cod_enviado not in (None, "") and not _mismo_codigo(cod_enviado, asignado):
+                lineas.append(
+                    f"Finnegans ignoró el Codigo enviado '{cod_enviado}' y le asignó "
+                    f"'{asignado}': el registro nuevo quedó con el código {asignado}."
+                )
+            else:
+                lineas.append(f"Finnegans le asignó al registro nuevo el código '{asignado}'.")
+            codigo = asignado
 
         if not codigo:
             lineas.append(

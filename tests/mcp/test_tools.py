@@ -340,6 +340,83 @@ async def test_escribir_post_relee_con_codigo_del_body(armar):
     assert "Campos que la API cambió por su cuenta" in out
 
 
+async def test_escribir_post_usa_el_codigo_que_asigna_finnegans(armar):
+    # Finnegans ignora el Codigo del body en el alta y devuelve el suyo en "id".
+    enviado = _cliente("ZZ-PRUEBA-MCP")
+    guardado = dict(copy.deepcopy(enviado), Codigo="2956")
+
+    def handler(metodo, path, id, params, body):
+        if metodo == "POST":
+            return {"id": "2956", "message": "created", "status": 200}
+        if metodo == "GET" and id == "2956":
+            return guardado
+        from finnegans_core.client import FinnegansError
+        raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
+
+    env = armar(handler)
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body=enviado)
+    gets = [c for c in env.cliente.llamadas if c.metodo == "GET"]
+    assert len(gets) == 1 and gets[0].id == "2956" and gets[0].path == "cliente"
+    assert "Finnegans ignoró el Codigo enviado 'ZZ-PRUEBA-MCP' y le asignó '2956'" in out
+    _, por_su_cuenta = _secciones(out)
+    assert "Codigo: ZZ-PRUEBA-MCP → 2956" in por_su_cuenta
+    assert "quedó con el código 2956" in out
+    assert "no pude releer" not in out
+
+
+async def test_escribir_post_id_igual_al_codigo_no_dice_que_lo_ignoro(armar):
+    nuevo = _cliente("2956")
+    env = armar(lambda m, p, i, pa, b: nuevo if m == "GET" else {"ID": 2956})
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body=nuevo)
+    assert "le asignó al registro nuevo el código '2956'" in out
+    assert "ignoró" not in out
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == ["2956"]
+
+
+async def test_escribir_post_relectura_del_codigo_asignado_fallida(armar):
+    def handler(metodo, path, id, params, body):
+        if metodo == "POST":
+            return {"id": "2956", "message": "created"}
+        from finnegans_core.client import FinnegansError
+        raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
+
+    env = armar(handler)
+    out = await env.llamar("escribir", metodo="POST", path="cliente",
+                           body=_cliente("ZZ-PRUEBA-MCP"))
+    assert "le asignó '2956'" in out
+    assert "la escritura se hizo, pero no pude releer" in out.lower()
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == ["2956"]
+
+
+async def test_escribir_post_sin_id_en_la_respuesta_relee_con_el_body(armar):
+    nuevo = _cliente("ZZ-PRUEBA")
+    env = armar(lambda m, p, i, pa, b: nuevo if m == "GET" else {"message": "created"})
+    out = await env.llamar("escribir", metodo="POST", path="cliente", body=nuevo)
+    assert [c.id for c in env.cliente.llamadas if c.metodo == "GET"] == ["ZZ-PRUEBA"]
+    assert "asignó" not in out
+
+
+async def test_leer_y_escribir_aceptan_id_numerico(armar):
+    registro = _cliente("2956")
+    env = armar(lambda m, *a: registro if m == "GET" else {"message": "updated"})
+    r = await env.server.call_tool("leer", {"path": "cliente", "id": 2956})
+    assert not r.is_error, r
+    assert env.cliente.llamadas[-1].id == "2956"
+    r = await env.server.call_tool("escribir", {
+        "metodo": "PUT", "path": "cliente", "id": 2956,
+        "base": "cliente_2956", "cambios": {"Nombre": "Otro"}})
+    assert not r.is_error, r
+    texto = "".join(c.text for c in r.content)
+    assert "Finnegans aceptó" in texto
+    put = [c for c in env.cliente.llamadas if c.metodo == "PUT"]
+    assert len(put) == 1 and put[0].id == "2956"
+    r = await env.server.call_tool("escribir", {"metodo": "DELETE", "path": "cliente",
+                                                "id": 2956})
+    assert not r.is_error, r
+    assert env.cliente.llamadas[-1].metodo == "DELETE"
+    assert env.cliente.llamadas[-1].id == "2956"
+
+
 async def test_escribir_viewer_no_relee(armar):
     env = armar(lambda *a: "OK")
     await env.llamar("escribir", metodo="POST", path="reports/ACOrdenesCompraPendientes",
