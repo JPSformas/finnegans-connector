@@ -64,3 +64,21 @@ def test_exportar_valores_complejos_y_control_chars(tmp_path):
     assert leidas[1][0] == '{"a": 1, "b": "ñ"}'
     assert leidas[1][1] == "okmal"
     assert leidas[2] == ["[1, 2]", ""]
+
+
+def test_exportar_uuid_decimal_fechas_y_zona(tmp_path):
+    import datetime as dt
+    import decimal
+    import uuid
+
+    u = uuid.uuid4()
+    aware = dt.datetime(2024, 1, 2, 10, 0, tzinfo=dt.timezone.utc)
+    filas = [(u, decimal.Decimal("1.50"), dt.date(2024, 1, 2), aware, b"ab")]
+    cols = ["u", "d", "f", "z", "b"]
+    p = exportar(cols, filas, tmp_path, "tipos", "xlsx")
+    ws = openpyxl.load_workbook(p).active
+    assert ws["A2"].value == str(u)
+    assert float(ws["B2"].value) == 1.5
+    assert "2024-01-02" in str(ws["D2"].value)
+    c = exportar(cols, filas, tmp_path, "tipos", "csv")
+    assert str(u) in c.read_text(encoding="utf-8-sig")

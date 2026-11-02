@@ -24,6 +24,7 @@ _MUESTRA_MAX_CHARS = 1500
 _NOTA_MAX_CHARS = 500
 # Reserva para el encabezado/pie ("Filas 1–37 de 4150. Para seguir: ...").
 _RESERVA_MENSAJE = 250
+_ERROR_MAX_CHARS = 1500
 
 
 class ConsultaInvalida(Exception):
@@ -44,6 +45,14 @@ def _q(nombre: str) -> str:
     return '"' + nombre.replace('"', '""') + '"'
 
 
+def _msg(e: Exception) -> str:
+    """Mensaje de DuckDB acotado: es util para Claude pero no debe inundar."""
+    t = str(e)
+    if len(t) > _ERROR_MAX_CHARS:
+        t = t[:_ERROR_MAX_CHARS] + "… (mensaje cortado)"
+    return t
+
+
 def _ruta_sql(ruta: str) -> str:
     return ruta.replace(os.sep, "/").replace("'", "''")
 
@@ -60,6 +69,10 @@ class Workspace:
         # Orden importa: primero el directorio permitido, despues cerrar el
         # acceso externo, y recien al final bloquear la configuracion.
         self._con.execute("SET allowed_directories=[?]", [self._dir.replace(os.sep, "/")])
+        # (antes de cerrar el acceso externo) Si no, DuckDB derrama a <CWD>/.tmp y lo agrega a los permitidos.
+        self._con.execute(
+            "SET temp_directory=?", [self._dir.replace(os.sep, "/") + "/spill"]
+        )
         self._con.execute("SET enable_external_access=false")
         self._con.execute("SET autoinstall_known_extensions=false")
         self._con.execute("SET autoload_known_extensions=false")
@@ -84,14 +97,18 @@ class Workspace:
             registros = [datos]
         elif isinstance(datos, list):
             if not datos:
+                self._olvidar(tabla)
                 return Resumen(None, 0, [], "", "La API devolvió una lista vacía (sin filas).")
             registros = [x if isinstance(x, dict) else {"valor": x} for x in datos]
         else:
-            texto = json.dumps(datos, ensure_ascii=False, default=str) if not isinstance(datos, str) else datos
-            return Resumen(
-                None, 0, [], "",
-                f"La API devolvió un valor sin forma de tabla: {texto[:_NOTA_MAX_CHARS]}",
-            )
+            # Recargar con algo que no es tabla no debe dejar la anterior:
+            # escribir(base=...) la usaría como base de un cambio.
+            self._olvidar(tabla)
+            texto = datos if isinstance(datos, str) else json.dumps(datos, ensure_ascii=False, default=str)
+            nota = f"La API devolvió un valor sin forma de tabla: {texto[:_NOTA_MAX_CHARS]}"
+            if len(texto) > _NOTA_MAX_CHARS:
+                nota += f"… (texto cortado: tenía {len(texto)} caracteres)"
+            return Resumen(None, 0, [], "", nota)
 
         self._n_archivo += 1
         ruta = os.path.join(self._dir, f"carga_{self._n_archivo}.ndjson")
@@ -104,11 +121,13 @@ class Workspace:
                 self._con.execute(
                     f"CREATE OR REPLACE TABLE {_q(tabla)} AS SELECT * FROM "
                     f"read_json_auto('{_ruta_sql(ruta)}', sample_size=-1, "
-                    f"maximum_object_size=33554432)"
+                    f"maximum_object_size=33554432, "
+                    f"map_inference_threshold=-1)"
                 )
             except duckdb.Error as e:
+                self._olvidar(tabla)
                 raise ConsultaInvalida(
-                    f"No se pudo cargar '{tabla}' como tabla: {e}"
+                    f"No se pudo cargar '{tabla}' como tabla: {_msg(e)}"
                 ) from e
         finally:
             try:
@@ -116,8 +135,23 @@ class Workspace:
             except OSError:
                 pass
 
+        try:
+            resumen = self._resumen(tabla)
+        except duckdb.Error as e:
+            self._olvidar(tabla)
+            raise ConsultaInvalida(
+                f"Se cargó '{tabla}' pero no se pudo resumir: {_msg(e)}"
+            ) from e
         self._crudos[tabla] = datos
-        return self._resumen(tabla)
+        return resumen
+
+    def _olvidar(self, tabla: str) -> None:
+        """Quita la tabla y su JSON crudo (si existían)."""
+        self._crudos.pop(tabla, None)
+        try:
+            self._con.execute(f"DROP TABLE IF EXISTS {_q(tabla)}")
+        except duckdb.Error:
+            pass
 
     def crudo(self, tabla: str) -> Any:
         """El JSON original tal como se cargó. KeyError si no existe."""
@@ -140,7 +174,11 @@ class Workspace:
 
     @staticmethod
     def _muestra(nombres: list[str], filas: list[tuple]) -> str:
-        """Filas de muestra acortadas hasta que entren en el tope."""
+        """Filas de muestra acortadas hasta que entren en el tope.
+
+        Si ni una fila entra (muchas columnas), lista los nombres de columna
+        y avisa cuantas faltan: nunca recorta en silencio.
+        """
         largo = 120
         while True:
             chicas = [tuple(resumir_valor(v, largo) for v in f) for f in filas]
@@ -150,7 +188,21 @@ class Workspace:
             largo //= 2
         if len(texto) > _MUESTRA_MAX_CHARS and len(filas) > 1:
             texto, _ = formatear_tabla(nombres, chicas[:1], 10**9)
-        return texto
+        if len(texto) <= _MUESTRA_MAX_CHARS:
+            return texto
+        aviso = (
+            f"Tabla demasiado ancha para mostrar filas de muestra ({len(nombres)} "
+            "columnas). Consultá pocas columnas con consultar(sql). Columnas: "
+        )
+        mostradas: list[str] = []
+        usado = len(aviso)
+        for nom in nombres:
+            if usado + len(nom) + 2 > _MUESTRA_MAX_CHARS - 40:
+                break
+            mostradas.append(nom)
+            usado += len(nom) + 2
+        resto = len(nombres) - len(mostradas)
+        return aviso + ", ".join(mostradas) + (f" … y {resto} columnas más" if resto else "")
 
     # -- consulta ---------------------------------------------------------
 
@@ -159,7 +211,7 @@ class Workspace:
         try:
             sentencias = duckdb.extract_statements(sql)
         except duckdb.Error as e:
-            raise ConsultaInvalida(f"SQL inválido: {e}") from e
+            raise ConsultaInvalida(f"SQL inválido: {_msg(e)}") from e
         if len(sentencias) != 1:
             raise ConsultaInvalida(
                 "Mandá exactamente una sentencia SQL por consulta."
@@ -175,7 +227,7 @@ class Workspace:
             columnas = [d[0] for d in cur.description]
             return columnas, cur.fetchall()
         except duckdb.Error as e:
-            raise ConsultaInvalida(f"La consulta falló: {e}") from e
+            raise ConsultaInvalida(f"La consulta falló: {_msg(e)}") from e
 
     def consultar(self, sql: str, desde: int = 0) -> str:
         """Resultado paginado como tabla markdown que cabe en el presupuesto."""
@@ -193,6 +245,15 @@ class Workspace:
             columnas, filas[desde:], RESPUESTA_MAX_CHARS - _RESERVA_MENSAJE
         )
         hasta = desde + n
+        if len(tabla) > RESPUESTA_MAX_CHARS - _RESERVA_MENSAJE:
+            # Ni una sola fila entra: no se manda cortada ni entera.
+            return (
+                f"La fila {desde + 1} es demasiado ancha: tiene {len(columnas)} "
+                f"columnas y ocupa unos {len(tabla)} caracteres (el máximo por "
+                f"respuesta es {RESPUESTA_MAX_CHARS}). Pedí menos columnas, "
+                "acortá textos con substr(col, 1, 200), o usá exportar para "
+                "guardar el resultado completo en un archivo."
+            )
         encabezado = f"Filas {desde + 1}–{hasta} de {total}."
         if hasta < total:
             encabezado += f" Para seguir: consultar(sql, desde={hasta})"

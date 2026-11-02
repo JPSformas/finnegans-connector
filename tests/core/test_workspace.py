@@ -3,6 +3,7 @@ import os
 import pytest
 
 from finnegans_core.presupuesto import (
+    PALABRAS_RESERVADAS,
     RESPUESTA_MAX_CHARS,
     formatear_tabla,
     nombre_tabla,
@@ -237,3 +238,109 @@ def test_resumir_valor():
     largo = resumir_valor("x" * 500)
     assert largo.endswith("…") and len(largo) <= 120
     assert resumir_valor({"a": "ñ"}) == '{"a": "ñ"}'
+
+
+# --- ronda de arreglos 1 ---------------------------------------------------
+
+
+def test_spill_y_directorios_permitidos_quedan_en_el_dir_privado(ws):
+    base = os.path.normcase(os.path.realpath(ws._dir))
+
+    def adentro(p: str) -> bool:
+        return os.path.normcase(os.path.realpath(p)).startswith(base)
+
+    temp = ws._con.execute("SELECT current_setting('temp_directory')").fetchone()[0]
+    assert adentro(temp)
+    permitidos = ws._con.execute(
+        "SELECT unnest(current_setting('allowed_directories'))"
+    ).fetchall()
+    assert permitidos
+    assert all(adentro(p[0]) for p in permitidos)
+
+
+def test_fechas_con_zona_horaria_se_cargan_y_consultan(ws):
+    r = ws.cargar("t", [{"f": "2024-01-02T10:00:00Z"}, {"f": "2024-01-02T10:00:00-03:00"}])
+    assert r.filas == 2
+    assert "de 2" in ws.consultar("SELECT * FROM t")
+
+
+def test_error_en_el_resumen_no_deja_tabla_a_medias(ws, monkeypatch):
+    def boom(self, tabla):
+        raise duckdb_error()
+
+    import duckdb
+
+    def duckdb_error():
+        return duckdb.InvalidInputException("falla simulada")
+
+    monkeypatch.setattr(Workspace, "_resumen", boom)
+    with pytest.raises(ConsultaInvalida):
+        ws.cargar("t", [{"a": 1}])
+    with pytest.raises(KeyError):
+        ws.crudo("t")
+    with pytest.raises(ConsultaInvalida):
+        ws.consultar("SELECT * FROM t")
+
+
+def test_consultar_fila_demasiado_ancha_da_mensaje_en_vez_de_la_fila(ws):
+    ws.cargar("t", [{"a": "z" * 20000, "b": 1}])
+    out = ws.consultar("SELECT * FROM t")
+    assert len(out) <= RESPUESTA_MAX_CHARS
+    assert "z" * 100 not in out
+    assert "substr" in out and "exportar" in out and "2 columnas" in out
+
+
+def test_consultar_600_columnas_largas_da_mensaje(ws):
+    fila = {f"columna_con_nombre_muy_largo_{i:04d}": "valor" * 10 for i in range(600)}
+    r = ws.cargar("ancha", [fila])
+    assert len(r.columnas) == 600  # sin inferir un MAP gigante
+    assert len(r.muestra) <= 1500
+    assert "columnas más" in r.muestra
+    out = ws.consultar("SELECT * FROM ancha")
+    assert len(out) <= RESPUESTA_MAX_CHARS
+    assert "600 columnas" in out and "exportar" in out
+
+
+def test_recargar_con_datos_no_tabulares_borra_tabla_y_crudo_viejos(ws):
+    ws.cargar("t", [{"a": 1}])
+    r = ws.cargar("t", [])
+    assert r.tabla is None
+    with pytest.raises(KeyError):
+        ws.crudo("t")
+    with pytest.raises(ConsultaInvalida):
+        ws.consultar("SELECT * FROM t")
+    ws.cargar("u", {"a": 1})
+    ws.cargar("u", "texto suelto")
+    with pytest.raises(KeyError):
+        ws.crudo("u")
+
+
+def test_nota_cortada_lo_dice():
+    w = Workspace()
+    try:
+        largo = "x" * 600
+        nota = w.cargar("n", largo).nota
+        assert "…" in nota and "cortado" in nota and "600" in nota
+        corto = w.cargar("n", "hola").nota
+        assert "cortado" not in corto
+    finally:
+        w.cerrar()
+
+
+def test_nombre_tabla_evita_palabras_reservadas_y_funciona_sin_comillas(ws):
+    assert nombre_tabla("order") != "order"
+    assert nombre_tabla("select/list") != "select"
+    nombre = nombre_tabla("order")
+    ws.cargar(nombre, [{"a": 1}])
+    assert "de 1" in ws.consultar(f"SELECT * FROM {nombre}")
+
+
+def test_palabras_reservadas_cubren_la_version_instalada():
+    import duckdb
+
+    filas = duckdb.connect().execute(
+        "SELECT keyword_name FROM duckdb_keywords() "
+        "WHERE keyword_category IN ('reserved', 'type_function')"
+    ).fetchall()
+    faltan = {f[0] for f in filas} - PALABRAS_RESERVADAS
+    assert not faltan

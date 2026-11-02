@@ -4,6 +4,8 @@ from __future__ import annotations
 import csv
 import json
 import re
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,10 +30,24 @@ def _nombre_seguro(nombre: str, formato: str) -> str:
     return base
 
 
+_NATIVOS = (str, int, float, bool, Decimal, date, datetime, time, timedelta)
+
+
 def _valor(v: Any) -> Any:
-    """Valor apto para escribir: dict/list pasan a JSON, sin control chars."""
+    """Valor apto para xlsx y csv.
+
+    dict/list van como JSON; fechas con zona como texto ISO (Excel no las
+    soporta); cualquier otro tipo no nativo (UUID, bytes, ...) como str().
+    Se sacan los caracteres de control que Excel no admite.
+    """
+    if v is None:
+        return None
     if isinstance(v, (dict, list, tuple)):
         v = json.dumps(v, ensure_ascii=False, default=str)
+    elif isinstance(v, (datetime, time)) and v.tzinfo is not None:
+        v = v.isoformat(sep=" ") if isinstance(v, datetime) else v.isoformat()
+    elif not isinstance(v, _NATIVOS):
+        v = str(v)
     if isinstance(v, str):
         v = ILLEGAL_CHARACTERS_RE.sub("", v)
     return v

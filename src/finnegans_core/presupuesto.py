@@ -62,6 +62,32 @@ def formatear_tabla(
     return "\n".join(lineas), n
 
 
+# Palabras que DuckDB 2.0 no deja usar sin comillas como nombre de tabla
+# (categorias reserved y type_function de duckdb_keywords()). Un test verifica
+# que siga cubriendo la version instalada.
+PALABRAS_RESERVADAS = frozenset(
+    {
+        'all', 'analyse', 'analyze', 'and', 'anti', 'any', 'array', 'as',
+        'asc', 'asof', 'asymmetric', 'at', 'authorization', 'binary', 'both',
+        'by', 'case', 'cast', 'check', 'collate', 'collation', 'column',
+        'columns', 'concurrently', 'constraint', 'create', 'cross', 'default',
+        'deferrable', 'desc', 'describe', 'distinct', 'do', 'else', 'end',
+        'except', 'false', 'fetch', 'for', 'foreign', 'freeze', 'from',
+        'full', 'generated', 'glob', 'group', 'having', 'ilike', 'in',
+        'initially', 'inner', 'intersect', 'into', 'is', 'isnull', 'join',
+        'lambda', 'lateral', 'leading', 'left', 'like', 'limit', 'map',
+        'natural', 'not', 'notnull', 'null', 'offset', 'on', 'only', 'or',
+        'order', 'outer', 'overlaps', 'pivot', 'pivot_longer', 'pivot_wider',
+        'placing', 'positional', 'primary', 'qualify', 'references',
+        'returning', 'right', 'select', 'semi', 'show', 'similar', 'some',
+        'struct', 'summarize', 'symmetric', 'table', 'tablesample', 'then',
+        'to', 'trailing', 'true', 'try_cast', 'tuple', 'union', 'unique',
+        'unpack', 'unpivot', 'using', 'variadic', 'verbose', 'when', 'where',
+        'window', 'with'
+    }
+)
+
+
 def _limpiar(texto: str) -> str:
     sin_acentos = "".join(
         c
@@ -76,7 +102,8 @@ def nombre_tabla(path: str, id: str | None = None) -> str:
     """Nombre de tabla DuckDB a partir del path de la API: [a-z0-9_].
 
     'reports/ACOrdenesCompraPendientes' -> 'acordenescomprapendientes'
-    'cliente/list' -> 'cliente'; ('cliente', 'P-01093') -> 'cliente_p_01093'
+    'cliente/list' -> 'cliente'; ('cliente', 'P-01093') -> 'cliente_p_01093'.
+    Una palabra reservada de SQL recibe sufijo: 'order' -> 'order_t'.
     """
     partes = [p for p in (path or "").split("/") if p.strip()]
     if len(partes) > 1 and partes[-1].strip().lower() == "list":
@@ -89,4 +116,6 @@ def nombre_tabla(path: str, id: str | None = None) -> str:
             nombre = f"{nombre}_{sufijo}"
     if nombre[0].isdigit():
         nombre = f"t_{nombre}"
+    if nombre in PALABRAS_RESERVADAS:
+        nombre = f"{nombre}_t"
     return nombre
