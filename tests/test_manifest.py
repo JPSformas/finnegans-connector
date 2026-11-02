@@ -89,7 +89,7 @@ def test_version_igual_en_manifest_pyproject_y_servidor():
     from finnegans_mcp import __version__
 
     pyproject = tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))
-    assert MANIFEST["version"] == pyproject["project"]["version"] == __version__ == "1.0.0"
+    assert MANIFEST["version"] == pyproject["project"]["version"] == __version__ == "1.0.1"
 
     async def _server_info():
         async with Client(crear_servidor(Settings())) as cliente:
