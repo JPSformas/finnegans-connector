@@ -21,3 +21,4 @@ packages = ["src/finnegans_core", "src/finnegans_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"
