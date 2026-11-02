@@ -1,9 +1,20 @@
+# Secretos y datos locales: NUNCA van dentro del paquete
+.env
+.env.*
+*.env
+exports/
+audit/
+actualizacion-error.txt
+
 # Entorno y cache de Python
 .venv/
+server/lib/
+server/venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
 
 # Control de versiones y editor
 .git/
