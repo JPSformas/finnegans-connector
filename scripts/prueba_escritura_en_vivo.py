@@ -68,6 +68,15 @@ TABLA_VERIFICACION = "zz_prueba_verificacion"
 # Claves que identifican un registro: si viajaran en el alta, Finnegans podria
 # modificar la plantilla en vez de crear uno nuevo.
 _CLAVE_IDENTIDAD = re.compile(r"^(?i:id|guid|uuid)$|^(?i:id)[A-Z_]|(?i:_?id)$")
+# Dentro de las listas (ProvinciaItems...) un XxxID suele ser una referencia a otro
+# maestro (ProvinciaID = "BSAS"): sacarla deja la fila incompleta y Finnegans
+# rechaza el alta. Ahi solo se sacan el id propio de la fila y los que apuntan
+# al cliente o a la fila.
+_CLAVE_IDENTIDAD_ANIDADA = re.compile(
+    r"^(?:id|guid|uuid)$"
+    r"|(?:cliente|fila|item|row|linea|renglon)_?(?:id|guid|uuid)$"
+    r"|^(?:id|guid|uuid)_?(?:cliente|fila|item|row|linea|renglon)",
+    re.IGNORECASE)
 # Campos que suelen ser unicos en Finnegans (un duplicado rechaza el alta).
 _CLAVE_UNICA = re.compile(
     r"cuit|cuil|documento|nrodoc|email|mail|correo|nroinscripcion|dni", re.IGNORECASE)
@@ -183,19 +192,40 @@ def campo_activo(plantilla: Mapping[str, Any], texto_ver_endpoint: str) -> str:
     )
 
 
-def _sin_identidad(valor: Any, sacadas: set[str]) -> Any:
-    """Copia sin las claves de identidad (id, guid, IdXxx, XxxId...) a toda profundidad."""
+def _sin_identidad(valor: Any, sacadas: set[str], anidado: bool = False) -> Any:
+    """Copia sin las claves de identidad, a toda profundidad.
+
+    Arriba de todo se saca cualquier clave con forma de id (id, guid, IdXxx, XxxId);
+    adentro, solo las de _CLAVE_IDENTIDAD_ANIDADA, para no perder referencias a
+    otros maestros como ProvinciaID.
+    """
+    patron = _CLAVE_IDENTIDAD_ANIDADA if anidado else _CLAVE_IDENTIDAD
     if isinstance(valor, dict):
         limpio = {}
         for k, v in valor.items():
-            if _CLAVE_IDENTIDAD.search(str(k)):
+            if patron.search(str(k)):
                 sacadas.add(str(k))
             else:
-                limpio[k] = _sin_identidad(v, sacadas)
+                limpio[k] = _sin_identidad(v, sacadas, True)
         return limpio
     if isinstance(valor, list):
-        return [_sin_identidad(v, sacadas) for v in valor]
+        return [_sin_identidad(v, sacadas, True) for v in valor]
     return valor
+
+
+def referencias_copiadas(valor: Any, ruta: str = "") -> list[str]:
+    """Rutas de las claves con forma de id que quedan en el alta (referencias)."""
+    encontradas: list[str] = []
+    if isinstance(valor, dict):
+        for k, v in valor.items():
+            aqui = f"{ruta}.{k}" if ruta else str(k)
+            if _CLAVE_IDENTIDAD.search(str(k)):
+                encontradas.append(aqui)
+            encontradas += referencias_copiadas(v, aqui)
+    elif isinstance(valor, list):
+        for v in valor:
+            encontradas += referencias_copiadas(v, ruta + "[]")
+    return sorted(set(encontradas))
 
 
 def claves_unicas(valor: Any, ruta: str = "") -> list[str]:
@@ -505,6 +535,8 @@ class Prueba:
         alta, sacadas = armar_alta(molde, flag, requeridos, self.copiar_resto)
         self.salida(f"Campos requeridos del swagger: {requeridos or '(no pude leerlos)'}")
         self.salida(f"Claves de identidad sacadas del alta: {sacadas or 'ninguna'}")
+        self.salida("Referencias a otros maestros que se copian tal cual: "
+                    f"{referencias_copiadas(alta) or 'ninguna'}")
         self.salida(f"Campo de estado: {flag} = {alta[flag]!r} (plantilla: {molde.get(flag)!r})")
         unicas = claves_unicas(alta)
         if unicas:

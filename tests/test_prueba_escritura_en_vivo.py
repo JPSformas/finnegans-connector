@@ -381,6 +381,58 @@ def test_alta_sin_ids_de_la_plantilla_a_ninguna_profundidad(tmp_path, capsys):
     assert not prohibidas & set(_claves_en_profundidad(post))
 
 
+VO_COMO_P02197 = {
+    "required": ["Codigo", "Nombre", "ProvinciaItems", "GrupoDifusionItems"],
+    "properties": {**VO_CON_ACTIVO["properties"],
+                   "GrupoDifusionItems": {"type": "array", "items": {"type": "object"}}},
+}
+
+
+def _como_p02197() -> dict:
+    """Misma forma que el cliente de pruebas real P02197, con valores falsos."""
+    return _plantilla(
+        IdentificacionTributariaNumero="20-00000000-0",
+        ProvinciaItems=[
+            {"RegimenImpositivo": None, "ActividadIIBBID": None, "ProvinciaID": "BSAS",
+             "Coeficiente": 0.0, "ControlImpositivo1": 1, "CodigoImpositivoRetencion": ""},
+            {"RegimenImpositivo": None, "ActividadIIBBID": "A1", "ProvinciaID": "CABA",
+             "Coeficiente": 0.0, "ControlImpositivo1": 1, "CodigoImpositivoRetencion": ""},
+        ],
+        GrupoDifusionItems=[{"GrupoDifusionCodigo": "EMF", "Email": "falso@example.com"}],
+    )
+
+
+def test_alta_conserva_las_referencias_anidadas_como_provinciaid(tmp_path, capsys):
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=_como_p02197(),
+        argv=FLAGS + ["--permitir-copiar-campos-unicos"],
+        vos={"ClienteVO": VO_COMO_P02197})
+    assert codigo == 0, out + err
+    post = [c for c in escrituras(cli) if c.metodo == "POST"][0].body
+    assert [f["ProvinciaID"] for f in post["ProvinciaItems"]] == ["BSAS", "CABA"]
+    assert post["ProvinciaItems"][1]["ActividadIIBBID"] == "A1"
+    # Lo que no es requerido no viaja: ni el CUIT ni la descripcion.
+    assert "IdentificacionTributariaNumero" not in post and "Descripcion" not in post
+    assert "ProvinciaItems[].ProvinciaID" in out
+
+
+def test_sin_permiso_los_mails_de_difusion_frenan_antes_de_escribir(tmp_path, capsys):
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=_como_p02197(), vos={"ClienteVO": VO_COMO_P02197})
+    assert codigo != 0
+    assert escrituras(cli) == []
+    assert "GrupoDifusionItems[].Email" in out + err
+
+
+def test_regex_anidada_saca_ids_propios_y_conserva_referencias():
+    sacar = ["id", "Id", "GUID", "uuid", "IdFila", "Fila_Id", "ClienteID", "IDCliente",
+             "cliente_id", "ItemId", "RowGuid", "LineaID"]
+    conservar = ["ProvinciaID", "ActividadIIBBID", "MonedaID", "TipoRetencionCodigo",
+                 "Provincia", "Identificacion"]
+    assert all(script._CLAVE_IDENTIDAD_ANIDADA.search(k) for k in sacar)
+    assert not any(script._CLAVE_IDENTIDAD_ANIDADA.search(k) for k in conservar)
+
+
 def test_copiar_resto_tambien_saca_los_ids(tmp_path, capsys):
     codigo, out, err, fin, cli = correr(
         tmp_path, capsys, plantilla=_con_ids(),
