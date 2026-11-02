@@ -751,3 +751,231 @@ def test_unicos_extendidos():
               "DNI", "CUIT"):
         assert script.claves_unicas({k: "x"}) == [k]
     assert script.claves_unicas({"Nombre": "x", "Descripcion": "y"}) == []
+
+
+# ------------------------------------- ronda 3: Finnegans asigna el codigo del alta
+
+
+class AsignaCodigo(Finnegans):
+    """Como el Finnegans real: el alta ignora el Codigo del body y asigna uno propio.
+
+    El POST responde {"id": "2956", ...} (o "OK" con responde_id=False). /list usa
+    claves en minuscula, como la API real.
+    """
+
+    def __init__(self, *a, asigna="2956", responde_id=True, lista_muestra_alta=True,
+                 activo_al_crear=False, **kw):
+        super().__init__(*a, **kw)
+        self.asigna = asigna
+        self.responde_id = responde_id
+        self.lista_muestra_alta = lista_muestra_alta
+        self.activo_al_crear = activo_al_crear
+        self.nombres_en_lista: dict[str, str] = {}  # lo que /list muestra, si difiere
+
+    def __call__(self, metodo, path, id, params, body):
+        if self.falla_en == metodo:
+            return super().__call__(metodo, path, id, params, body)
+        if metodo == "POST" and path == "cliente":
+            nuevo = dict(copy.deepcopy(body), Codigo=self.asigna, FechaAlta="2026-01-01")
+            if self.activo_al_crear:
+                nuevo["Activo"] = True
+            self.registros[self.asigna] = nuevo
+            if self.responde_id:
+                return {"id": self.asigna, "message": "created", "status": 200}
+            return "OK"
+        if metodo == "GET" and path == "cliente/list":
+            return [{"codigo": c, "nombre": self.nombres_en_lista.get(c, r.get("Nombre")),
+                     "activo": r.get("Activo")}
+                    for c, r in self.clientes().items()
+                    if self.lista_muestra_alta or c != self.asigna]
+        if metodo == "PUT" and path == "cliente" and id != body.get("Codigo"):
+            raise AssertionError(f"PUT a {id} con Codigo {body.get('Codigo')}")
+        return super().__call__(metodo, path, id, params, body)
+
+
+def _resto_numerico(fin, codigo="2950", nombre="ZZ PRUEBA MCP - editado", activo=False):
+    fin.registros[codigo] = {"Codigo": codigo, "Nombre": nombre, "Activo": activo}
+
+
+def test_finnegans_que_asigna_el_codigo_flujo_completo(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla())
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out[-3000:] + err
+    w = escrituras(cli)
+    assert [(c.metodo, c.id) for c in w] == [
+        ("POST", None), ("PUT", "2956"), ("PUT", "2956"), ("DELETE", "2956")]
+    assert w[0].body["Codigo"] == PREFIJO  # se manda, Finnegans lo ignora
+    for c in w[1:3]:
+        assert c.body["Codigo"] == "2956"
+    assert w[1].body["Nombre"] == script.NOMBRE_EDITADO
+    assert w[2].body["Nombre"] == script.NOMBRE_BODY
+    assert "le asignó '2956'" in out
+    assert "Confirmado: '2956'" in out
+    assert "No existe 'cliente/2956'" in out  # la verificacion tras el DELETE
+    assert "Finnegans le asignó el código '2956'" in out and "PRUEBA OK" in out
+    assert fin.registros == {} and fin.plantilla == _plantilla()
+    # Nada se escribe antes de releer 2956 para confirmarlo.
+    primera_lectura = next(i for i, c in enumerate(cli.llamadas)
+                           if c.metodo == "GET" and c.id == "2956")
+    primer_put = next(i for i, c in enumerate(cli.llamadas) if c.metodo == "PUT")
+    assert primera_lectura < primer_put
+
+
+def test_sin_id_en_la_respuesta_busca_el_cliente_nuevo_por_nombre(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla(), responde_id=False)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out[-3000:] + err
+    assert "buscado por nombre): 2956" in out
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
+        ("POST", None), ("PUT", "2956"), ("PUT", "2956"), ("DELETE", "2956")]
+
+
+def test_sin_id_y_sin_cliente_nuevo_en_la_lista_aborta_sin_borrar(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla(), responde_id=False, lista_muestra_alta=False)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]  # cero DELETE
+    assert "No pude saber qué código" in err and "a mano" in err
+    assert "NO borro nada" in out
+    assert "2956" in fin.registros  # quedo para revisarlo a mano
+
+
+def test_sin_id_y_dos_clientes_nuevos_con_el_nombre_aborta_sin_borrar(tmp_path, capsys):
+    class CreaDos(AsignaCodigo):
+        def __call__(self, metodo, path, id, params, body):
+            r = super().__call__(metodo, path, id, params, body)
+            if metodo == "POST":
+                self.registros["2957"] = dict(self.registros["2956"], Codigo="2957")
+            return r
+
+    fin = CreaDos(_plantilla(), responde_id=False)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]
+    assert "encontré 2 clientes nuevos" in err
+
+
+def test_alta_activa_con_codigo_asignado_no_se_borra_sola(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla(), activo_al_crear=True)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1 and "ACTIVA" in err
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]  # sin confirmar, no se borra
+    assert "NO borro nada" in out and "'2956'" in out
+
+
+def test_fallo_despues_de_confirmar_borra_el_codigo_asignado(tmp_path, capsys):
+    class FallaElSegundoPut(AsignaCodigo):
+        puts = 0
+
+        def __call__(self, metodo, path, id, params, body):
+            if metodo == "PUT":
+                FallaElSegundoPut.puts += 1
+                if FallaElSegundoPut.puts == 2:
+                    raise FinnegansError("Error en PUT cliente (HTTP 500): boom")
+            return super().__call__(metodo, path, id, params, body)
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=FallaElSegundoPut(_plantilla()))
+    assert codigo == 1
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
+        ("POST", None), ("PUT", "2956"), ("PUT", "2956"), ("DELETE", "2956")]
+    assert fin.registros == {}
+
+
+def test_resto_encontrado_por_nombre_con_codigo_numerico_se_lee_y_se_borra(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out[-3000:] + err
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
+        ("DELETE", "2950"), ("POST", None), ("PUT", "2956"), ("PUT", "2956"),
+        ("DELETE", "2956")]
+    lectura = next(i for i, c in enumerate(cli.llamadas) if c.metodo == "GET" and c.id == "2950")
+    borrado = next(i for i, c in enumerate(cli.llamadas) if c.metodo == "DELETE")
+    assert lectura < borrado
+
+
+def test_resto_por_nombre_activo_no_se_borra(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin, activo=True)
+    antes = copy.deepcopy(fin.registros)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert escrituras(cli) == []
+    assert fin.registros == antes
+    assert "ACTIVO" in err and "2950" in err and NO_VOLVER in err
+
+
+def test_resto_que_el_listado_nombra_de_prueba_pero_al_leerlo_no_se_borra(tmp_path, capsys):
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin, nombre="Cliente real SA")
+    fin.nombres_en_lista["2950"] = "ZZ PRUEBA MCP - borrar"
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 1
+    assert escrituras(cli) == []
+    assert "Cliente real SA" in err and "2950" in err and NO_VOLVER in err
+
+
+def test_guarda_rechaza_un_codigo_numerico_sin_confirmar(tmp_path):
+    settings = fakes.ajustes(tmp_path)
+    fin = AsignaCodigo(_plantilla())
+    _resto_numerico(fin, codigo="2956", nombre="ZZ PRUEBA MCP - borrar")
+    _resto_numerico(fin, codigo="2957", nombre="ZZ PRUEBA MCP - borrar")
+    cli = fakes.ClienteFalso(settings, fin)
+    ws = script.Workspace()
+    try:
+        server = script.crear_servidor(
+            settings, client=cli, swagger=fakes.catalogo(settings, fakes.SPEC),
+            docs=fakes.DocsFalso(), workspace=ws)
+        prueba = script.Prueba(server, ws, lambda _t: None)
+        sin_confirmar = (
+            ("DELETE", dict(id="2956")),
+            ("PUT", dict(id="2956", body={"Codigo": "2956", "Nombre": "x"})),
+            ("PUT", dict(id=f"{PREFIJO}-X", body={"Codigo": "2956"})),
+        )
+        for metodo, kw in sin_confirmar:
+            with pytest.raises(script.ErrorPrueba):
+                prueba.escribir(metodo, **kw)
+        assert escrituras(cli) == []
+
+        # Un codigo que ya existia antes del alta no se confirma.
+        prueba.previos = {"2957"}
+        with pytest.raises(script.ErrorPrueba, match="ya existía"):
+            prueba.confirmar_asignado("2957", "Activo")
+        with pytest.raises(script.ErrorPrueba):
+            prueba.escribir("DELETE", id="2957")
+
+        # Confirmado (releido: nombre, inactivo, nuevo), pasa solo ese codigo.
+        prueba.confirmar_asignado("2956", "Activo")
+        for metodo, kw in (("DELETE", dict(id="2957")), ("DELETE", dict(id="29560")),
+                           ("PUT", dict(id="2956", body={"Codigo": "2957"}))):
+            with pytest.raises(script.ErrorPrueba):
+                prueba.escribir(metodo, **kw)
+        assert escrituras(cli) == []
+        prueba.escribir("DELETE", id="2956")
+        assert [(c.metodo, c.id) for c in escrituras(cli)] == [("DELETE", "2956")]
+    finally:
+        ws.cerrar()
+
+
+@pytest.mark.parametrize(("texto", "esperado"), [
+    ("POST cliente: listo.\nFinnegans ignoró el Codigo enviado 'ZZ-PRUEBA-MCP' y le asignó "
+     "'2956': el registro nuevo quedó con el código 2956.", "2956"),
+    ("Finnegans le asignó al registro nuevo el código 'C0100'.", "C0100"),
+    ('POST cliente: listo.\nRespuesta de la API: {"id": "2956", "message": "created", '
+     '"status": 200}', "2956"),
+    ('Respuesta de la API: {"ID": 2956, "message": "created"}', "2956"),
+    ('Respuesta de la API: {"message": "created", "id": "2956", "detalle": "xxxxx…', "2956"),
+    ('Respuesta de la API: {"ProvinciaID": "BSAS", "message": "created"}', None),
+    ("Respuesta de la API: OK", None),
+    ("POST cliente: listo, Finnegans aceptó la escritura.", None),
+])
+def test_codigo_asignado_sale_de_la_salida_de_escribir(texto, esperado):
+    assert script.codigo_asignado(texto) == esperado
+
+
+def test_ayuda_documenta_los_campos_que_funcionaron(capsys):
+    with pytest.raises(SystemExit):
+        script.main(["--help"], {})
+    ayuda = " ".join(capsys.readouterr().out.split())
+    assert "CategoriaFiscalCodigo=CF" in ayuda
+    assert "IdentificacionTributariaCodigo=SINIDENTIFICACION" in ayuda
