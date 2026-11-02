@@ -55,7 +55,9 @@ class Finnegans:
     """Un 'Finnegans' en memoria que atiende lo que el script le pide."""
 
     def __init__(self, plantilla: dict, restos: tuple[str, ...] = (),
-                 falla_en: str | None = None) -> None:
+                 falla_en: str | None = None, oculta_en_lista: bool = False) -> None:
+        self.oculta_en_lista = oculta_en_lista  # /list no muestra los ZZ (p. ej. inactivos)
+        self.borrado = False
         self.plantilla = plantilla
         self.registros: dict[str, dict] = {}
         for c in restos:
@@ -70,7 +72,8 @@ class Finnegans:
         if self.falla_en == metodo:
             raise FinnegansError(f"Error en {metodo} {path} (HTTP 500): boom")
         if metodo == "GET" and path == "cliente/list":
-            return [{"Codigo": c, "Nombre": r.get("Nombre")} for c, r in self.clientes().items()]
+            return [{"Codigo": c, "Nombre": r.get("Nombre")} for c, r in self.clientes().items()
+                    if not (self.oculta_en_lista and c.startswith(PREFIJO))]
         if metodo == "GET" and path == "cliente":
             if id not in self.clientes():
                 raise FinnegansError(f"Error en GET cliente (HTTP 404): no existe {id}")
@@ -80,16 +83,17 @@ class Finnegans:
             self.registros[codigo] = dict(copy.deepcopy(body), FechaAlta="2026-01-01")
             return "OK"
         if metodo == "DELETE" and path == "cliente":
+            self.borrado = True
             self.registros.pop(id, None)
             return None
         raise AssertionError(f"llamada inesperada: {metodo} {path} {id}")
 
 
 def correr(tmp_path, capsys, plantilla=None, restos=(), falla_en=None, vos=None,
-           argv=FLAGS):
+           argv=FLAGS, fin=None):
     """Corre main() con fakes. Devuelve (codigo, stdout, stderr, finnegans, cliente)."""
     plantilla = _plantilla() if plantilla is None else plantilla
-    fin = Finnegans(plantilla, restos, falla_en)
+    fin = fin or Finnegans(plantilla, restos, falla_en)
     settings = fakes.ajustes(tmp_path)
     cli = fakes.ClienteFalso(settings, fin)
     vos = {"ClienteVO": VO_CON_ACTIVO} if vos is None else vos
@@ -159,12 +163,12 @@ def test_secuencia_completa_con_resto_previo(tmp_path, capsys):
     ]
     post, put_base, put_body = w[1], w[2], w[3]
 
-    # El alta sale de la plantilla: mismos campos, otro codigo y nombre, inactiva.
-    esperado = dict(_plantilla(), Codigo=PREFIJO, Nombre=script.NOMBRE_ALTA, Activo=False)
-    assert post.body == esperado
+    # El alta lleva solo los campos requeridos de la plantilla (Codigo y Nombre), con
+    # otro codigo y nombre, mas el estado inactivo.
+    assert post.body == {"Codigo": PREFIJO, "Nombre": script.NOMBRE_ALTA, "Activo": False}
     # PUT con base + cambios: el registro entero con solo el Nombre cambiado.
     assert put_base.body["Nombre"] == script.NOMBRE_EDITADO
-    assert put_base.body["Descripcion"] == "no tocar"
+    assert put_base.body["FechaAlta"] == "2026-01-01"  # el registro entero, releido
     assert put_base.body["Activo"] is False
     # PUT con body completo.
     assert put_body.body["Nombre"] == script.NOMBRE_BODY
@@ -333,3 +337,191 @@ def test_delete_que_no_borra_se_detecta(tmp_path, capsys):
     codigo = script.main(FLAGS, env, client=cli, swagger=sw, docs=fakes.DocsFalso())
     assert codigo != 0
     assert "sigue existiendo" in capsys.readouterr().err
+
+
+# ------------------------------------------------- ronda de endurecimiento
+
+VO_CON_ITEMS = {
+    "required": ["Codigo", "Nombre", "ProvinciaItems"],
+    "properties": {**VO_CON_ACTIVO["properties"]},
+}
+
+
+def _con_ids() -> dict:
+    return _plantilla(
+        Id=7, GUID="aaaa-bbbb", IDCliente=99, ClienteId=5,
+        ProvinciaItems=[{"Id": 1, "IdFila": 2, "Provincia": "BA", "Fila_Id": 3,
+                         "Sub": [{"UUID": "u", "Valor": "x"}]}],
+    )
+
+
+def _claves_en_profundidad(valor):
+    if isinstance(valor, dict):
+        for k, v in valor.items():
+            yield k
+            yield from _claves_en_profundidad(v)
+    elif isinstance(valor, list):
+        for v in valor:
+            yield from _claves_en_profundidad(v)
+
+
+def test_alta_sin_ids_de_la_plantilla_a_ninguna_profundidad(tmp_path, capsys):
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, plantilla=_con_ids(),
+                                        vos={"ClienteVO": VO_CON_ITEMS})
+    assert codigo == 0, out + err
+    post = [c for c in escrituras(cli) if c.metodo == "POST"][0].body
+    assert set(post) == {"Codigo", "Nombre", "Activo", "ProvinciaItems"}
+    assert post["ProvinciaItems"] == [{"Provincia": "BA", "Sub": [{"Valor": "x"}]}]
+    prohibidas = {"Id", "GUID", "IDCliente", "ClienteId", "IdFila", "Fila_Id", "UUID"}
+    assert not prohibidas & set(_claves_en_profundidad(post))
+
+
+def test_copiar_resto_tambien_saca_los_ids(tmp_path, capsys):
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=_con_ids(),
+        argv=FLAGS + ["--copiar-resto-de-la-plantilla"])
+    assert codigo == 0, out + err
+    post = [c for c in escrituras(cli) if c.metodo == "POST"][0].body
+    assert post["Descripcion"] == "no tocar"
+    assert "Id" not in post and "GUID" not in post and "IDCliente" not in post
+    assert "Id" not in post["ProvinciaItems"][0]
+
+
+def test_plantilla_cambiada_tras_el_alta_aborta_y_borra_solo_el_de_prueba(tmp_path, capsys):
+    class TocaLaPlantilla(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            r = super().__call__(metodo, path, id, params, body)
+            if metodo == "POST":
+                self.plantilla["Nombre"] = "pisada por el alta"
+            return r
+
+    fin = TocaLaPlantilla(_plantilla())
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo != 0
+    assert "CAMBIÓ" in err and "Nombre" in err and "P01093" in err
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
+        ("POST", None), ("DELETE", PREFIJO)]
+
+
+def test_plantilla_que_desaparece_no_dispara_borrados(tmp_path, capsys):
+    class PisaLaPlantilla(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            r = super().__call__(metodo, path, id, params, body)
+            if metodo == "POST":  # el alta le cambio el codigo a la plantilla
+                self.plantilla = dict(self.plantilla, Codigo="OTRO-CODIGO")
+            return r
+
+    fin = PisaLaPlantilla(_plantilla())
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo != 0
+    assert "YA NO EXISTE" in err
+    assert [c.metodo for c in escrituras(cli)] == ["POST"]  # ni siquiera el DELETE
+    assert "a mano" in out
+
+
+def test_alta_que_queda_activa_aborta_y_borra(tmp_path, capsys):
+    class IgnoraInactivo(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            r = super().__call__(metodo, path, id, params, body)
+            if metodo == "POST":
+                self.registros[body["Codigo"]]["Activo"] = True
+            return r
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=IgnoraInactivo(_plantilla()))
+    assert codigo != 0 and "ACTIVA" in err
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [("POST", None), ("DELETE", PREFIJO)]
+    assert fin.registros == {}
+
+
+def test_lectura_fallida_tras_el_delete_no_se_toma_como_no_existe(tmp_path, capsys):
+    class FallaLaLectura(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            if metodo == "GET" and path == "cliente" and id == PREFIJO and self.borrado:
+                raise FinnegansError("Error en GET cliente (HTTP 500): boom")
+            return super().__call__(metodo, path, id, params, body)
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=FallaLaLectura(_plantilla()))
+    assert codigo == 1
+    assert "PRUEBA OK" not in out and "No pude confirmar" in err
+
+
+def test_listado_final_fallido_no_usa_la_tabla_vieja(tmp_path, capsys):
+    class FallaElListado(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            if metodo == "GET" and path == "cliente/list" and self.borrado:
+                raise FinnegansError("Error en GET cliente/list (HTTP 500): boom")
+            return super().__call__(metodo, path, id, params, body)
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=FallaElListado(_plantilla()))
+    assert codigo == 1
+    assert "PRUEBA OK" not in out and "cliente/list" in err
+
+
+def test_campo_unico_sin_el_permiso_aborta_antes_de_escribir(tmp_path, capsys):
+    vo = {"required": ["Codigo", "Nombre", "Email"],
+          "properties": {**VO_CON_ACTIVO["properties"], "Email": {"type": "string"}}}
+    plantilla = _plantilla(Email="secreto@ejemplo.com")
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=plantilla, vos={"ClienteVO": vo},
+        restos=(f"{PREFIJO}-VIEJO",))
+    assert codigo != 0
+    assert "Email" in err and "secreto@ejemplo.com" not in err
+    assert "--permitir-copiar-campos-unicos" in err
+    assert escrituras(cli) == []
+
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=_plantilla(Email="secreto@ejemplo.com"),
+        vos={"ClienteVO": vo}, argv=FLAGS + ["--permitir-copiar-campos-unicos"])
+    assert codigo == 0, out + err
+    assert escrituras(cli)[0].metodo == "POST"
+    assert escrituras(cli)[0].body["Email"] == "secreto@ejemplo.com"
+
+
+def test_resto_por_id_directo_se_borra_aunque_el_listado_no_lo_muestre(tmp_path, capsys):
+    fin = Finnegans(_plantilla(), restos=(PREFIJO,), oculta_en_lista=True)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo == 0, out + err
+    assert [(c.metodo, c.id) for c in escrituras(cli)] == [
+        ("DELETE", PREFIJO), ("POST", None), ("PUT", PREFIJO), ("PUT", PREFIJO),
+        ("DELETE", PREFIJO)]
+
+
+def _prueba_suelta(tmp_path):
+    settings = fakes.ajustes(tmp_path)
+    cli = fakes.ClienteFalso(settings, Finnegans(_plantilla()))
+    ws = script.Workspace()
+    server = script.crear_servidor(
+        settings, client=cli, swagger=fakes.catalogo(settings, fakes.SPEC),
+        docs=fakes.DocsFalso(), workspace=ws)
+    return script.Prueba(server, ws, lambda _t: None), cli, ws
+
+
+def test_llamar_no_deja_pasar_escribir(tmp_path):
+    prueba, cli, ws = _prueba_suelta(tmp_path)
+    try:
+        with pytest.raises(script.ErrorPrueba):
+            prueba.llamar("escribir", metodo="DELETE", path="cliente", id="P01093")
+        assert cli.llamadas == []
+    finally:
+        ws.cerrar()
+
+
+def test_guarda_put_sin_codigo_en_el_body_falla_cerrada(tmp_path):
+    prueba, cli, ws = _prueba_suelta(tmp_path)
+    try:
+        with pytest.raises(script.ErrorPrueba):
+            prueba.escribir("PUT", id=f"{PREFIJO}-X", body={"Nombre": "sin codigo"})
+        assert cli.llamadas == []
+    finally:
+        ws.cerrar()
+
+
+def test_regex_de_identidad_y_de_unicos():
+    ids = ["id", "ID", "Id", "guid", "UUID", "IdCliente", "IDCliente", "Id_Fila",
+           "ClienteId", "cliente_id", "ClienteID"]
+    no_ids = ["Codigo", "Nombre", "Descripcion", "Identificacion", "Activo", "Provincia"]
+    assert all(script._CLAVE_IDENTIDAD.search(k) for k in ids)
+    assert not any(script._CLAVE_IDENTIDAD.search(k) for k in no_ids)
+    assert script.claves_unicas(
+        {"CUIT": "1", "Contactos": [{"EMail": "x", "Dni": "2"}], "Nombre": "n"}
+    ) == ["CUIT", "Contactos[].Dni", "Contactos[].EMail"]
