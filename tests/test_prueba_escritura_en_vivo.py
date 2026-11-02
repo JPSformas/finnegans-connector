@@ -391,7 +391,7 @@ VO_COMO_P02197 = {
 }
 
 
-def _como_p02197() -> dict:
+def _como_p02197_base() -> dict:
     """Misma forma que el cliente de pruebas real P02197, con valores falsos."""
     return _plantilla(
         IdentificacionTributariaNumero="20-00000000-0",
@@ -423,6 +423,31 @@ def test_alta_conserva_las_referencias_anidadas_como_provinciaid(tmp_path, capsy
     # Lo que no es requerido no viaja: ni el CUIT ni la descripcion.
     assert "IdentificacionTributariaNumero" not in post and "Descripcion" not in post
     assert "ProvinciaItems[].ProvinciaID" in out
+
+
+def test_campo_fija_un_valor_del_alta_sin_copiarlo_de_la_plantilla(tmp_path, capsys):
+    codigo, out, err, fin, cli = correr(
+        tmp_path, capsys, plantilla=_como_p02197(CategoriaFiscalCodigo="RI"),
+        argv=FLAGS + ["--permitir-copiar-campos-unicos",
+                      "--campo", "CategoriaFiscalCodigo=CF"],
+        vos={"ClienteVO": VO_COMO_P02197})
+    assert codigo == 0, out + err
+    post = [c for c in escrituras(cli) if c.metodo == "POST"][0].body
+    assert post["CategoriaFiscalCodigo"] == "CF"
+    assert post["Codigo"] == PREFIJO
+
+
+@pytest.mark.parametrize("par", ["Codigo=P02197", "nombre=x", "Activo=true", "sin-igual",
+                                 "Mal Nombre=x"])
+def test_campo_invalido_o_que_pisa_lo_fijo_no_hace_nada(tmp_path, capsys, par):
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, argv=FLAGS + ["--campo", par])
+    assert codigo == 2
+    assert cli.llamadas == []
+    assert "No se hizo nada" in err
+
+
+def _como_p02197(**extra) -> dict:
+    return _como_p02197_base() | extra
 
 
 def test_sin_permiso_los_mails_de_difusion_frenan_antes_de_escribir(tmp_path, capsys):

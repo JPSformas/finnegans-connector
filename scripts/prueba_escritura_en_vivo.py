@@ -292,12 +292,14 @@ class Prueba:
     def __init__(self, server: Any, workspace: Workspace,
                  salida: Callable[[str], None] = print, *,
                  permitir_campos_unicos: bool = False,
-                 copiar_resto: bool = False) -> None:
+                 copiar_resto: bool = False,
+                 campos_extra: Mapping[str, str] | None = None) -> None:
         self.server = server
         self.workspace = workspace
         self.salida = salida
         self.permitir_campos_unicos = permitir_campos_unicos
         self.copiar_resto = copiar_resto
+        self.campos_extra = dict(campos_extra or {})
         self.paso = 0
         self.n_tabla = 0
         self.pendiente_de_borrar = False
@@ -532,7 +534,12 @@ class Prueba:
         flag = campo_activo(molde, ver)
         requeridos = campos_requeridos(ver)
         alta, sacadas = armar_alta(molde, flag, requeridos, self.copiar_resto)
+        # Finnegans pide campos que el swagger no marca como requeridos (la categoria
+        # fiscal, por ejemplo): se fijan con --campo en vez de copiar mas de la plantilla.
+        alta.update(self.campos_extra)
         self.salida(f"Campos requeridos del swagger: {requeridos or '(no pude leerlos)'}")
+        if self.campos_extra:
+            self.salida(f"Campos fijados con --campo: {self.campos_extra}")
         self.salida(f"Claves de identidad sacadas del alta: {sacadas or 'ninguna'}")
         self.salida("Referencias a otros maestros que se copian tal cual: "
                     f"{referencias_copiadas(alta) or 'ninguna'}")
@@ -666,7 +673,28 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--copiar-resto-de-la-plantilla", action="store_true",
                    help="si el alta con solo los campos requeridos es rechazada: copia toda "
                         "la plantilla (sin ids ni guids, salvo referencias como ProvinciaID)")
+    p.add_argument("--campo", metavar="CLAVE=VALOR", action="append", default=[],
+                   help="fija un campo del alta que Finnegans pide aunque el swagger no lo "
+                        "marque requerido (ej. CategoriaFiscalCodigo=CF); repetible. No "
+                        "sirve para el código, el nombre ni el estado activo")
     return p
+
+
+_CAMPOS_FIJOS = {"codigo", "nombre", *_FLAGS_ACTIVO}
+
+
+def _campos_extra(pares: list[str]) -> dict[str, str]:
+    """Convierte los --campo CLAVE=VALOR; ValueError con el motivo si alguno no sirve."""
+    campos: dict[str, str] = {}
+    for par in pares:
+        clave, igual, valor = par.partition("=")
+        clave = clave.strip()
+        if not igual or not re.fullmatch(r"[A-Za-z0-9_]+", clave):
+            raise ValueError(f"--campo {par!r} no tiene la forma CLAVE=VALOR.")
+        if clave.lower() in _CAMPOS_FIJOS:
+            raise ValueError(f"--campo no puede cambiar '{clave}': lo fija la prueba.")
+        campos[clave] = valor
+    return campos
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None, *,
@@ -678,6 +706,11 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None, *,
         faltan.append("--si-escribir-en-produccion")
     if not args.plantilla or not args.plantilla.strip():
         faltan.append("--plantilla CODIGO")
+    try:
+        campos_extra = _campos_extra(args.campo)
+    except ValueError as e:
+        print(f"{e} No se hizo nada.", file=sys.stderr)
+        return 2
     if faltan:
         print(
             "Esta prueba ESCRIBE en Finnegans de producción (crea, modifica y borra un "
@@ -714,6 +747,7 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None, *,
             server, workspace, salida,
             permitir_campos_unicos=args.permitir_copiar_campos_unicos,
             copiar_resto=args.copiar_resto_de_la_plantilla,
+            campos_extra=campos_extra,
         ).correr(plantilla)
     except ErrorPrueba as e:
         print(f"\nPRUEBA FALLIDA: {e}", file=sys.stderr)
