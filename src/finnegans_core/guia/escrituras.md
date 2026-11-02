@@ -30,8 +30,8 @@ Si el registro venía en un estado que la API rechaza (ver `iibb`), no se puede
 volver atrás por API: hay que hacerlo por la interfaz de Finnegans.
 
 ## Antes y después de escribir
-`escribir` ejecuta de inmediato y no hay vista previa: confirmá con el usuario
-qué vas a cambiar antes de llamarlo.
+`escribir` ejecuta de inmediato (no hay vista previa). Claude Desktop puede
+pedirle permiso al usuario antes de cada escritura según su configuración.
 - Antes: usá `ver_endpoint(path)` para ver los campos del body y cuáles son
   requeridos; `ver_endpoint(path, campo=...)` detalla un campo puntual.
 - La propia API rechaza los bodies inválidos (por ejemplo 406 "empty id", o 500

@@ -110,3 +110,7 @@ def test_escrituras_describe_el_flujo_nuevo():
     assert 'escribir(metodo="POST"' in esc
     assert 'params={"createIfNotExists": "1"}' in esc
     assert "ver_endpoint" in esc
+
+
+def test_escrituras_no_impone_confirmacion_obligatoria():
+    assert "confirmá con el usuario" not in guia("escrituras")
