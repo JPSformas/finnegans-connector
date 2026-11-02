@@ -34,4 +34,3 @@ recepción.
 
 ## Errores comunes
 - 404: el código o id no existe; explicá que el registro no se encontró.
-- Algunos DELETE pueden estar bloqueados por política: si es así, explicalo.

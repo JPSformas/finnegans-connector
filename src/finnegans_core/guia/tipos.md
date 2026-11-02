@@ -25,8 +25,3 @@ no lo adivines por el path. El swagger global tiene 579 paths (los hosts
 
 ## Sin tag
 `GET /oauth/token` y `custom/BProc` (el único con PATCH).
-
-## Otros datos
-- La clave de documentación del swagger va embebida en cada `$ref` del propio
-  spec: es una clave de solo lectura de docs a nivel workspace, no un secreto
-  personal.

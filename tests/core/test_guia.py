@@ -19,6 +19,8 @@ PROHIBIDOS = (
     "preview",
     "advertencia",
     "validador",
+    "alto riesgo",
+    "bloqueados por pol",
 )
 
 

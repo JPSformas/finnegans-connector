@@ -47,6 +47,9 @@ from finnegans_mcp.server import crear_servidor
 
 PREFIJO = "ZZ-PRUEBA-MCP"
 CODIGO_PRUEBA = PREFIJO
+# Todo nombre que la prueba le pone a su registro empieza asi: un resto cuyo
+# nombre no empiece asi puede ser un cliente real y no se toca.
+NOMBRE_PREFIJO = "ZZ PRUEBA MCP"
 NOMBRE_ALTA = "ZZ PRUEBA MCP - borrar"
 NOMBRE_EDITADO = "ZZ PRUEBA MCP - editado"
 NOMBRE_BODY = "ZZ PRUEBA MCP - body completo"
@@ -56,6 +59,7 @@ MAX_RESTOS = 20
 
 # Cada lectura usa una tabla nueva (zz_prueba_<base>_<n>): una lectura fallida no
 # reemplaza la tabla, y si se reusara el nombre se verian datos viejos.
+NO_VOLVER_A_CORRER = "No vuelvas a correr la prueba hasta revisar los dos clientes a mano."
 TABLA_LISTA = "zz_prueba_lista"
 TABLA_PLANTILLA = "zz_prueba_plantilla"
 TABLA_PRUEBA = "zz_prueba_registro"
@@ -429,6 +433,23 @@ class Prueba:
             codigos.append(CODIGO_PRUEBA)
         return codigos
 
+    def verificar_restos(self, restos: list[str]) -> None:
+        """Lee cada resto y aborta (sin escribir nada) si no tiene nombre de prueba.
+
+        Un ZZ-PRUEBA-MCP* que no se llama 'ZZ PRUEBA MCP...' puede ser un cliente
+        real (por ejemplo, la plantilla pisada por un alta anterior): no se borra.
+        """
+        for codigo in restos:
+            registro, _ = self.leer_registro(codigo, TABLA_VERIFICACION)
+            nombre = registro.get(_clave(registro, "nombre", "Nombre"))
+            if not isinstance(nombre, str) or not nombre.startswith(NOMBRE_PREFIJO):
+                raise ErrorPrueba(
+                    f"El resto '{codigo}' se llama {nombre!r}, que no empieza con "
+                    f"'{NOMBRE_PREFIJO}': puede ser un cliente real y no lo borro. No se "
+                    f"escribió nada. Revisá a mano, en Finnegans, el cliente '{codigo}' y "
+                    f"la plantilla '{self.plantilla}'. {NO_VOLVER_A_CORRER}"
+                )
+
     def leer_plantilla(self, codigo: str) -> dict:
         registro, _ = self.leer_registro(codigo, TABLA_PLANTILLA)
         return registro
@@ -452,7 +473,8 @@ class Prueba:
             raise ErrorPrueba(
                 f"La plantilla '{self.plantilla}' {problema}. Revisá a mano, en Finnegans, el "
                 f"cliente '{self.plantilla}' y el cliente '{CODIGO_PRUEBA}' (el alta podría "
-                "haberla pisado)."
+                f"haberla pisado, y '{CODIGO_PRUEBA}' puede haber quedado ACTIVO). "
+                f"{NO_VOLVER_A_CORRER}"
             )
 
     # -- corrida ----------------------------------------------------------------
@@ -472,6 +494,7 @@ class Prueba:
         self.titulo("Buscar restos de corridas anteriores (cliente/list y por id)")
         restos = self.restos()
         self.salida(f"Restos encontrados: {restos or 'ninguno'}")
+        self.verificar_restos(restos)
 
         self.titulo(f"Leer la plantilla '{plantilla}' (solo lectura) y ver el alta de cliente")
         molde = self.leer_plantilla(plantilla)
@@ -567,7 +590,8 @@ class Prueba:
             self.salida(
                 f"\n--- La prueba se cortó y NO borro nada automáticamente: la plantilla "
                 f"'{self.plantilla}' {problema}. Revisá a mano en Finnegans los clientes "
-                f"'{self.plantilla}' y '{CODIGO_PRUEBA}'. ---"
+                f"'{self.plantilla}' y '{CODIGO_PRUEBA}' ('{CODIGO_PRUEBA}' puede haber "
+                f"quedado ACTIVO). {NO_VOLVER_A_CORRER} ---"
             )
             return
         self.salida(f"\n--- La prueba se cortó: intento borrar {CODIGO_PRUEBA} ---")

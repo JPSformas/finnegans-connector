@@ -83,6 +83,22 @@ async def test_nota_si_las_fuentes_no_coinciden():
     assert any("las fuentes no coinciden" in n for n in r.notas)
 
 
+async def test_fila_solo_de_docs_que_no_esta_en_el_swagger_queda_marcada():
+    sw = SwaggerFalso([_coin("/reports/A", 3.0), _coin("/reports/B", 2.0)])
+    docs = DocsFalso([{"path": "A", "resumen": ""},
+                      {"path": "ClientesFantasma", "resumen": "no existe"}])
+    r = await buscar_endpoint("clientes", sw, docs)
+    fantasma = next(f for f in r.filas if f.path == "ClientesFantasma")
+    assert fantasma.en_swagger is False
+    assert all(f.en_swagger for f in r.filas if f is not fantasma)
+    nota = next(n for n in r.notas if "ClientesFantasma" in n)
+    assert "no está en el swagger" in nota
+    assert nota.endswith("preguntale al usuario")
+    linea = next(x for x in formatear_busqueda(r).splitlines() if "ClientesFantasma" in x
+                 and x.startswith("- ") and "(docs)" in x)
+    assert linea.endswith("(no está en el swagger)")
+
+
 async def test_nota_si_hay_empate():
     sw = SwaggerFalso([_coin("/reports/A", 2.5), _coin("/reports/B", 2.5)])
     r = await buscar_endpoint("x", sw, DocsFalso([{"path": "A", "resumen": ""}]))
@@ -106,7 +122,8 @@ async def test_toda_nota_termina_pidiendo_al_usuario():
     sw = SwaggerFalso([_coin("/reports/A", 2.5, cobertura=0.5),
                        _coin("/reports/B", 2.5, cobertura=0.5)])
     r = await buscar_endpoint("x", sw, DocsFalso([{"path": "Z", "resumen": ""}]))
-    assert len(r.notas) == 3
+    # fuentes no coinciden, empate, coincidencia parcial y Z fuera del swagger
+    assert len(r.notas) == 4
     assert all(n.endswith("preguntale al usuario") for n in r.notas)
 
 

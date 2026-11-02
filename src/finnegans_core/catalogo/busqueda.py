@@ -27,6 +27,8 @@ class FilaBusqueda:
     tipo: TipoEndpoint
     resumen: str
     fuentes: list[str] = field(default_factory=list)  # "swagger" y/o "docs"
+    # False si la documentacion lo sugiere pero el swagger no tiene ese path.
+    en_swagger: bool = True
 
 
 @dataclass
@@ -42,10 +44,12 @@ class _IndicePaths:
         self._completos: dict[str, str] = {}
         self._ultimos: dict[str, str] = {}
         self._metodos: dict[str, list[str]] = {}
+        self.cargado = False
         try:
             paths = swagger.spec().get("paths") or {}
         except Exception:  # sin spec no hay nada que cruzar: se usa el id tal cual
             paths = {}
+        self.cargado = bool(paths)
         for path, ops in paths.items():
             clave = _clave(path)
             self._completos.setdefault(clave, path)
@@ -56,6 +60,10 @@ class _IndicePaths:
     def resolver(self, ident: str) -> str:
         clave = _clave(ident)
         return self._completos.get(clave) or self._ultimos.get(clave) or ident
+
+    def existe(self, path: str) -> bool:
+        """True si el path (ya resuelto) esta en el swagger, sin importar mayusculas."""
+        return _clave(path) in self._completos
 
     def metodos(self, path: str) -> list[str]:
         return list(self._metodos.get(path, []))
@@ -105,6 +113,7 @@ async def buscar_endpoint(
     claves_docs = {_clave(p) for p in docs_paths}
 
     filas: list[FilaBusqueda] = []
+    fuera_del_swagger: list[str] = []
     vistos: set[str] = set()
     for c in swagger_res:
         vistos.add(_clave(c.path))
@@ -114,12 +123,17 @@ async def buscar_endpoint(
         if _clave(path) in vistos:
             continue
         vistos.add(_clave(path))
+        # Sin spec cargado no se puede saber; el swagger es la fuente de verdad.
+        en_swagger = not indice.cargado or indice.existe(path)
+        if not en_swagger:
+            fuera_del_swagger.append(path)
         filas.append(FilaBusqueda(
             path=path,
             metodos=indice.metodos(path),
             tipo=swagger.tipo(path),
             resumen=d.get("resumen", ""),
             fuentes=["docs"],
+            en_swagger=en_swagger,
         ))
 
     notas: list[str] = []
@@ -132,6 +146,12 @@ async def buscar_endpoint(
         notas.append(
             f"las fuentes no coinciden: la documentación sugiere {docs_paths[0]} "
             f"y el swagger propone otros endpoints; para saber cuál corresponde, {_PREGUNTAR}"
+        )
+    if fuera_del_swagger:
+        notas.append(
+            f"la documentación sugiere {', '.join(fuera_del_swagger)} pero no está en el "
+            "swagger: puede que no exista o que se llame distinto; antes de usarlo, "
+            f"{_PREGUNTAR}"
         )
     if len(swagger_res) >= 2 and math.isclose(swagger_res[0].puntaje, swagger_res[1].puntaje):
         notas.append(
@@ -158,6 +178,8 @@ def formatear_busqueda(r: ResultadoBusqueda) -> str:
         if f.resumen:
             partes.append(f.resumen)
         partes.append(f"({'+'.join(f.fuentes)})")
+        if not f.en_swagger:
+            partes.append("(no está en el swagger)")
         lineas.append(" ".join(partes))
     if not lineas:
         lineas.append("No encontré endpoints para esa consulta.")

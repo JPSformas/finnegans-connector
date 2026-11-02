@@ -63,7 +63,8 @@ class Finnegans:
         self.plantilla = plantilla
         self.registros: dict[str, dict] = {}
         for c in restos:
-            self.registros[c] = {"Codigo": c, "Nombre": "resto", "Activo": False}
+            self.registros[c] = {"Codigo": c, "Nombre": "ZZ PRUEBA MCP - borrar",
+                                 "Activo": False}
         self.falla_en = falla_en
         self.cliente = None  # lo pone armar()
 
@@ -479,6 +480,51 @@ def test_campo_unico_sin_el_permiso_aborta_antes_de_escribir(tmp_path, capsys):
     assert codigo == 0, out + err
     assert escrituras(cli)[0].metodo == "POST"
     assert escrituras(cli)[0].body["Email"] == "secreto@ejemplo.com"
+
+
+NO_VOLVER = "No vuelvas a correr la prueba hasta revisar los dos clientes a mano."
+
+
+@pytest.mark.parametrize(("codigo_resto", "oculta"), [
+    (PREFIJO, False), (PREFIJO, True), (f"{PREFIJO}-VIEJO", False)])
+def test_resto_con_nombre_de_cliente_real_aborta_sin_escribir(tmp_path, capsys,
+                                                               codigo_resto, oculta):
+    # Un alta anterior pisó un cliente real: el resto tiene el código de prueba pero
+    # los datos (y el nombre) de un cliente de verdad.
+    fin = Finnegans(_plantilla(), restos=(codigo_resto,), oculta_en_lista=oculta)
+    fin.registros[codigo_resto]["Nombre"] = "Cliente real SA"
+    fin.registros[codigo_resto]["Activo"] = True
+    antes = copy.deepcopy(fin.registros)
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo != 0
+    assert escrituras(cli) == []
+    assert fin.registros == antes and fin.borrado is False
+    assert "Cliente real SA" in err and codigo_resto in err
+    assert NO_VOLVER in err
+    assert "PRUEBA OK" not in out
+
+
+def test_resto_sin_nombre_aborta_sin_escribir(tmp_path, capsys):
+    fin = Finnegans(_plantilla(), restos=(PREFIJO,))
+    del fin.registros[PREFIJO]["Nombre"]
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=fin)
+    assert codigo != 0
+    assert escrituras(cli) == []
+    assert NO_VOLVER in err
+
+
+def test_avisos_de_plantilla_tocada_piden_no_volver_a_correr(tmp_path, capsys):
+    class TocaLaPlantilla(Finnegans):
+        def __call__(self, metodo, path, id, params, body):
+            r = super().__call__(metodo, path, id, params, body)
+            if metodo == "POST":
+                self.plantilla["Nombre"] = "pisada por el alta"
+            return r
+
+    codigo, out, err, fin, cli = correr(tmp_path, capsys, fin=TocaLaPlantilla(_plantilla()))
+    assert codigo != 0
+    assert NO_VOLVER in err and "ACTIVO" in err  # aborto de verificar_plantilla
+    assert NO_VOLVER in out and "ACTIVO" in out  # aviso de la limpieza que no borra
 
 
 def test_resto_por_id_directo_se_borra_aunque_el_listado_no_lo_muestre(tmp_path, capsys):

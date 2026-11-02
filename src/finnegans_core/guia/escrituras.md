@@ -43,6 +43,4 @@ pedirle permiso al usuario antes de cada escritura según su configuración.
 
 ## Seguridad
 - Nunca pidas ni guardes contraseñas personales.
-- Operaciones de alto riesgo: leé el motivo y pedí atención extra al usuario.
-- Los DELETE pueden estar bloqueados por política; si es así, explicalo.
 - Producción: no hay host de pruebas.
