@@ -56,10 +56,10 @@ Nothing from this task is committed to the repo. Work in the session scratchpad.
 **Files:**
 - Create: `pyproject.toml`, `.mcpbignore`, `src/finnegans_core/__init__.py`, `src/finnegans_mcp/__init__.py`, `tests/conftest.py`
 - Move (git mv): `finnegans/vocabulario.py` → `src/finnegans_core/vocabulario.py`; `finnegans/errores.py` → `src/finnegans_core/errores.py`; `tests/test_vocabulario.py` → `tests/core/test_vocabulario.py`; `tests/test_errores.py` → `tests/core/test_errores.py`
-- Delete: `cli.py`, `install.py`, `verify_setup.py`, `server.py`, `requirements.txt`, `scripts/actualizar.bat`, `scripts/instalar.bat`, `service-credentials.env.example`, `.env.example`, `examples/`, `finnegans/validator.py`, `finnegans/audit.py`, `finnegans/config.py`, `finnegans/__init__.py`, and every test under `tests/` not moved here or in Tasks 2–3
+- Delete: `cli.py`, `install.py`, `verify_setup.py`, `server.py`, `requirements.txt`, `scripts/actualizar.bat`, `scripts/instalar.bat`, `service-credentials.env.example`, `.env.example`, `examples/`, the **whole** `finnegans/` package (everything not moved above), `tests/__init__.py`, and every other test under `tests/`
 - Modify: `.github/workflows/tests.yml`, `.gitignore`
 
-Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, `finnegans/swagger_catalog.py` and their tests until Tasks 2–4 port them. Keep `ASSISTANT_INSTRUCTIONS.md` until Task 6.
+The legacy modules still to port (`client.py`, `redaction.py`, `discovery.py`, `swagger_catalog.py`, and their tests) are deleted here and read back by Tasks 2–4 with `git show c364a9f:<path>`, so no half-alive legacy package stays importable. Keep `ASSISTANT_INSTRUCTIONS.md` until Task 6.
 
 **Interfaces:**
 - Produces: importable `finnegans_core.vocabulario` (`sin_acentos`, `normalizar`, `variantes`, `sinonimos_de`, `SINONIMOS`) and `finnegans_core.errores.traducir_error(api_id: str, mensaje: str, id: str | None = None) -> str`, both unchanged in behavior.
@@ -82,7 +82,7 @@ Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, 
 
 **Files:**
 - Create: `src/finnegans_core/config.py`, `src/finnegans_core/secretos.py`, `src/finnegans_core/client.py`
-- Delete: `finnegans/client.py`, `finnegans/redaction.py`, `tests/test_client_auth.py` (its cases are ported to the new test)
+- Port from (read with `git show c364a9f:<path>`): `finnegans/client.py`, `finnegans/redaction.py`, `tests/test_client_auth.py` (its cases go into the new test)
 - Test: `tests/core/test_config.py`, `tests/core/test_client.py`
 
 **Interfaces:**
@@ -119,7 +119,7 @@ Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, 
 
 **Files:**
 - Create: `src/finnegans_core/catalogo/__init__.py`, `src/finnegans_core/catalogo/swagger.py`
-- Delete: `finnegans/swagger_catalog.py`, `tests/test_swagger_catalog.py` (ported), `tests/test_server_discovery_swagger.py`
+- Port from (read with `git show c364a9f:<path>`): `finnegans/swagger_catalog.py`, `tests/test_swagger_catalog.py`
 - Test: `tests/core/test_swagger.py`
 
 **Interfaces:**
@@ -154,7 +154,7 @@ Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, 
 
 **Files:**
 - Create: `src/finnegans_core/catalogo/docs_mcp.py`, `src/finnegans_core/catalogo/busqueda.py`, `tests/fixtures/docs_search_apis.json`
-- Delete: `finnegans/discovery.py`, `tests/test_discovery_schema.py`, and the now-empty `finnegans/` package
+- Port from (read with `git show c364a9f:<path>`): `finnegans/discovery.py` (v1 SDK; v2 names differ)
 - Test: `tests/core/test_busqueda.py`
 
 **Interfaces:**
@@ -195,7 +195,7 @@ Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, 
   - `RESPUESTA_MAX_CHARS = 8000` (in `presupuesto.py`)
   - `formatear_tabla(columnas: list[str], filas: list[tuple], max_chars: int) -> tuple[str, int]` returns a markdown table and how many rows fit. At least one row is always included. Cells are never cut.
   - `resumir_valor(v: Any, max_len: int = 120) -> str`, for sample rows only. It appends `…`.
-  - `nombre_tabla(path: str, id: str | None = None) -> str` gives lowercase `[a-z0-9_]`, accents stripped, `ñ` → `n`, last path segment (`reports/ACOrdenesCompraPendientes` → `acordenescomprapendientes`), `_` + sanitized id when given, and a `t_` prefix if it starts with a digit.
+  - `nombre_tabla(path: str, id: str | None = None) -> str` gives lowercase `[a-z0-9_]`, accents stripped, `ñ` → `n`, last path segment ignoring a trailing `list` (`reports/ACOrdenesCompraPendientes` → `acordenescomprapendientes`, `cliente/list` → `cliente`), `_` + sanitized id when given, and a `t_` prefix if it starts with a digit.
   - `Resumen` is a dataclass: `tabla: str | None, filas: int, columnas: list[tuple[str, str]], muestra: str, nota: str | None`.
   - `Workspace(memoria: str = "1GB")`:
     - `.cargar(tabla: str, datos: Any) -> Resumen`
@@ -214,7 +214,7 @@ Keep `finnegans/client.py`, `finnegans/redaction.py`, `finnegans/discovery.py`, 
   - `test_consultar_rechaza_lo_que_no_es_lectura`: each of `COPY t TO 'x.csv'`, `ATTACH 'x.db'`, `INSTALL httpfs`, `CREATE TABLE z AS SELECT 1`, `SELECT 1; DROP TABLE t` raises `ConsultaInvalida`, and the table still exists afterwards.
   - `test_consultar_no_lee_archivos_de_la_pc`: `SELECT * FROM read_csv('C:/Windows/win.ini')` raises `ConsultaInvalida`, with DuckDB's own error wrapped.
   - `test_show_y_describe_funcionan`: `SHOW TABLES` lists the loaded tables.
-  - `test_nombre_tabla`: `nombre_tabla("reports/ACOrdenesCompraPendientes") == "acordenescomprapendientes"`, `nombre_tabla("cliente","P-01093") == "cliente_p_01093"`, `nombre_tabla("compañía/list") == "list"`, and `nombre_tabla("dirección") == "direccion"`.
+  - `test_nombre_tabla`: `nombre_tabla("reports/ACOrdenesCompraPendientes") == "acordenescomprapendientes"`, `nombre_tabla("cliente","P-01093") == "cliente_p_01093"`, `nombre_tabla("compañía/list") == "compania"`, `nombre_tabla("cliente/list") == "cliente"`, and `nombre_tabla("dirección") == "direccion"`.
   - `test_exportar_xlsx_y_csv`: accents and `ñ` survive a round-trip read with openpyxl and csv, and the second export with the same name gets ` (2)`.
 - [ ] **Step 2:** Run `uv run pytest -q tests/core/test_workspace.py tests/core/test_exportar.py`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
