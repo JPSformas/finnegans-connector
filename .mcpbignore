@@ -1,0 +1,38 @@
+# Secretos y datos locales: NUNCA van dentro del paquete
+.env
+.env.*
+*.env
+exports/
+audit/
+actualizacion-error.txt
+
+# Entorno y cache de Python
+.venv/
+server/lib/
+server/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Control de versiones y editor
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Paquetes ya generados
+*.mcpb
+
+# Solo desarrollo: no viaja en la extension
+tests/
+docs/
+.github/
+scripts/
+
+# Solo desarrollo y herramientas locales
+.superpowers/
+.claude/

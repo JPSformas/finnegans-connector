@@ -1,10 +1,6 @@
-# Secrets — NUNCA commitear
-.env
+# Secretos: archivos .env viejos o locales NUNCA se commitean
 *.env
-.env.*
-!.env.example
-!service-credentials.env.example
-service-credentials.env
+.env*
 
 # Log del actualizador (rutas locales y detalle tecnico)
 actualizacion-error.txt
@@ -14,6 +10,9 @@ audit/
 
 # Exports de datos reales (maestros de clientes, CUITs). NUNCA versionar.
 exports/
+
+# Paquetes de la extension
+*.mcpb
 
 # Python
 __pycache__/

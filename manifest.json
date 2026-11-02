@@ -1,0 +1,135 @@
+{
+  "manifest_version": "0.4",
+  "name": "finnegans",
+  "display_name": "Finnegans",
+  "version": "1.0.2",
+  "description": "Consultá y modificá datos de Finnegans desde Claude, en lenguaje natural.",
+  "long_description": "Conecta Claude con la API de Finnegans: busca el endpoint correcto, lee datos, los consulta con SQL, los exporta a Excel o CSV y, cuando se lo pedís, escribe cambios. Las lecturas y las escrituras son herramientas separadas para que Claude Desktop pida permiso antes de modificar algo.",
+  "author": {
+    "name": "Juan Sbatella"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/finnegans_mcp/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "src/finnegans_mcp/server.py"],
+      "env": {
+        "FINNEGANS_CLIENT_ID": "${user_config.client_id}",
+        "FINNEGANS_CLIENT_SECRET": "${user_config.client_secret}",
+        "FINNEGANS_SWAGGER_KEY": "${user_config.swagger_key}",
+        "FINNEGANS_DOCS_CLIENT_ID": "${user_config.docs_client_id}",
+        "FINNEGANS_DOCS_SECRET_KEY": "${user_config.docs_secret_key}",
+        "FINNEGANS_EXPORT_DIR": "${user_config.carpeta_exportacion}",
+        "FINNEGANS_BASE_URL": "${user_config.base_url}",
+        "FINNEGANS_SWAGGER_URL": "${user_config.swagger_url}",
+        "FINNEGANS_DOCS_MCP_URL": "${user_config.docs_mcp_url}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "buscar_endpoint",
+      "description": "Busca qué endpoint de Finnegans sirve para un pedido, en el swagger y en la documentación."
+    },
+    {
+      "name": "ver_endpoint",
+      "description": "Muestra los métodos, parámetros y campos de un endpoint o recurso."
+    },
+    {
+      "name": "leer",
+      "description": "Lee datos de Finnegans (GET); si es mucho, los carga en una tabla para consultar."
+    },
+    {
+      "name": "consultar",
+      "description": "Consulta con SQL de solo lectura las tablas ya cargadas."
+    },
+    {
+      "name": "exportar",
+      "description": "Guarda el resultado de una consulta como Excel o CSV en la carpeta de exportación."
+    },
+    {
+      "name": "escribir",
+      "description": "Modifica datos en Finnegans (POST, PUT, PATCH o DELETE) y muestra qué cambió."
+    },
+    {
+      "name": "guia",
+      "description": "Explica reglas del negocio: sucursales, IIBB, rutas, tipos, escrituras, clientes y parámetros de reportes."
+    },
+    {
+      "name": "verificar_conexion",
+      "description": "Comprueba las claves y la conexión, y dice cuál falla."
+    }
+  ],
+  "user_config": {
+    "client_id": {
+      "type": "string",
+      "title": "Client ID de Finnegans",
+      "description": "Identificador de la aplicación en Finnegans. Te lo pasa Juan Sbatella.",
+      "required": true
+    },
+    "client_secret": {
+      "type": "string",
+      "title": "Client secret de Finnegans",
+      "description": "Clave secreta de la aplicación en Finnegans. Te la pasa Juan Sbatella.",
+      "sensitive": true,
+      "required": true
+    },
+    "swagger_key": {
+      "type": "string",
+      "title": "Clave del swagger",
+      "description": "Clave para consultar el catálogo de endpoints. Te la pasa Juan Sbatella.",
+      "sensitive": true,
+      "required": true
+    },
+    "docs_client_id": {
+      "type": "string",
+      "title": "Client ID de la documentación",
+      "description": "Identificador para acceder a la documentación de la API. Te lo pasa Juan Sbatella.",
+      "required": true
+    },
+    "docs_secret_key": {
+      "type": "string",
+      "title": "Secret key de la documentación",
+      "description": "Clave secreta para acceder a la documentación de la API. Te la pasa Juan Sbatella.",
+      "sensitive": true,
+      "required": true
+    },
+    "carpeta_exportacion": {
+      "type": "directory",
+      "title": "Carpeta de exportación",
+      "description": "Dónde se guardan los Excel y CSV que pidas. Si no sabés cuál elegir, dejá la que viene.",
+      "default": "${DOCUMENTS}/Finnegans",
+      "required": false
+    },
+    "base_url": {
+      "type": "string",
+      "title": "URL de la API (avanzado)",
+      "description": "No la cambies salvo que Juan Sbatella te lo indique.",
+      "default": "https://api.finneg.com",
+      "required": false
+    },
+    "swagger_url": {
+      "type": "string",
+      "title": "URL del swagger (avanzado)",
+      "description": "No la cambies salvo que Juan Sbatella te lo indique.",
+      "default": "https://oneteam.finneg.com/BSA/api/swaggerGlobal",
+      "required": false
+    },
+    "docs_mcp_url": {
+      "type": "string",
+      "title": "URL de la documentación (avanzado)",
+      "description": "No la cambies salvo que Juan Sbatella te lo indique.",
+      "default": "https://services.finneg.com/api/1/finnegans-developer-mcp/finnegans-api-docs/mcp",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,59 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"status\":\"found\",\"query\":\"ordenes de compra\",\"count\":6,\"results\":[{\"id\":\"ACOrdenesCompraDetalle\",\"title\":\"ACOrdenesCompraDetalle\",\"version\":\"1.0.0\",\"description\":\"Obtiene el detalle de una orden de compra por Identificación Externa\",\"confidence\":40.91},{\"id\":\"ACOrdenesCompraPendientes\",\"title\":\"ACOrdenesCompraPendientes\",\"version\":\"1.0.0\",\"description\":\"Obtiene las ordenes de compra pendientes por proveedor\",\"confidence\":36},{\"id\":\"ACOrdenesCompraFinalizadas\",\"title\":\"ACOrdenesCompraFinalizadas\",\"version\":\"1.0.0\",\"description\":\"Obtiene las ordenes de compra finalizadas por proveedor\",\"confidence\":34.62},{\"id\":\"ACOrdenesCompraProductosPendientes\",\"title\":\"ACOrdenesCompraProductosPendientes\",\"version\":\"1.0.0\",\"description\":\"Cantidad pendiente de entrega de una Orden de compra - API\",\"confidence\":29.41},{\"id\":\"APIBmodelerDatawarehouseEntidad\",\"title\":\"APIBmodelerDatawarehouseEntidad\",\"version\":\"1.0.0\",\"description\":\"API para gestionar entidades de Datawarehouse de Bmodeler. Almacena información de procesos, hilos, tareas y responsables para análisis y reportes\",\"confidence\":16.13},{\"id\":\"TrasladoCVByCTG\",\"title\":\"TrasladoCVByCTG\",\"version\":\"1.0.0\",\"description\":\"Api autogenerada para vista Traslado de Granos (Compra-Venta) por CTG\",\"confidence\":11.76}]}"
+    }
+  ],
+  "structuredContent": {
+    "status": "found",
+    "query": "ordenes de compra",
+    "count": 6,
+    "results": [
+      {
+        "id": "ACOrdenesCompraDetalle",
+        "title": "ACOrdenesCompraDetalle",
+        "version": "1.0.0",
+        "description": "Obtiene el detalle de una orden de compra por Identificación Externa",
+        "confidence": 40.91
+      },
+      {
+        "id": "ACOrdenesCompraPendientes",
+        "title": "ACOrdenesCompraPendientes",
+        "version": "1.0.0",
+        "description": "Obtiene las ordenes de compra pendientes por proveedor",
+        "confidence": 36
+      },
+      {
+        "id": "ACOrdenesCompraFinalizadas",
+        "title": "ACOrdenesCompraFinalizadas",
+        "version": "1.0.0",
+        "description": "Obtiene las ordenes de compra finalizadas por proveedor",
+        "confidence": 34.62
+      },
+      {
+        "id": "ACOrdenesCompraProductosPendientes",
+        "title": "ACOrdenesCompraProductosPendientes",
+        "version": "1.0.0",
+        "description": "Cantidad pendiente de entrega de una Orden de compra - API",
+        "confidence": 29.41
+      },
+      {
+        "id": "APIBmodelerDatawarehouseEntidad",
+        "title": "APIBmodelerDatawarehouseEntidad",
+        "version": "1.0.0",
+        "description": "API para gestionar entidades de Datawarehouse de Bmodeler. Almacena información de procesos, hilos, tareas y responsables para análisis y reportes",
+        "confidence": 16.13
+      },
+      {
+        "id": "TrasladoCVByCTG",
+        "title": "TrasladoCVByCTG",
+        "version": "1.0.0",
+        "description": "Api autogenerada para vista Traslado de Granos (Compra-Venta) por CTG",
+        "confidence": 11.76
+      }
+    ]
+  },
+  "isError": false,
+  "resultType": "complete"
+}
